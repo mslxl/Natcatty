@@ -500,11 +500,12 @@ func TestPaneCloseStylesRenderTheirGeometryAndOpacity(t *testing.T) {
 }
 
 // TestPaneCloseSurvivorNativeRouteAcrossTheCollapsedSplit measures MyGo's
-// native Match + ScaleContent route for the expanding survivor across the
-// split the close collapses. Ticket 04 measured the route failing when a
-// split is created; a close removes one instead. The test observes the real
-// Pane's visible box at a mid-run frame, not just its fields or final state,
-// and compares it with the overlay fallback at the same instant.
+// native Match route for the expanding survivor across the split the close
+// collapses. Ticket 04 measured the route failing when a split is created; a
+// close removes one instead. The test observes the real Pane's visible box at
+// a mid-run frame, not just its fields or final state: the Pane is laid out
+// at each animated box, so its content never raster-scales (ADR 0026), and
+// the test compares that with the overlay fallback at the same instant.
 func TestPaneCloseSurvivorNativeRouteAcrossTheCollapsedSplit(t *testing.T) {
 	g := motionGraph(t, paneClosePreferences(true, true, domainpreferences.MotionPopin))
 	if err := g.state.NewTab(); err != nil {
@@ -560,10 +561,11 @@ func TestPaneCloseSurvivorNativeRouteAcrossTheCollapsedSplit(t *testing.T) {
 	if !ok {
 		t.Fatalf("the survivor has no PaneRegion label")
 	}
-	// The real Pane's layout is already final, but what it paints is not: the
-	// visible label is between the old and final widths at mid-run, so Match +
-	// ScaleContent carries the whole survivor across the collapsed split. A
-	// loose margin asserts movement, not an easing value.
+	// The recorded box is already final for the next event, but the live layout
+	// is not: without ScaleContent MyGo lays the Pane out at each animated box,
+	// so the visible label is between the old and final widths at mid-run while
+	// its content stays at its own size. A loose margin asserts movement, not an
+	// easing value.
 	if label.W <= old.Column.W+50 || label.W >= end.Column.W-50 {
 		t.Fatalf("native survivor at k=%v is %v wide, want between the old %v and final %v",
 			k, label.W, old.Column.W, end.Column.W)
@@ -577,9 +579,9 @@ func TestPaneCloseSurvivorNativeRouteAcrossTheCollapsedSplit(t *testing.T) {
 	}
 	transition, ok := wm.nativeTransition(survivorID)
 	if !ok || transition.Duration != 150*time.Millisecond || !transition.Position ||
-		!transition.Size || !transition.ScaleContent ||
+		!transition.Size || transition.ScaleContent ||
 		transition.Match != (motion.PaneMatch{ID: survivorID}) {
-		t.Fatalf("native transition = %+v, want a 150ms Match + ScaleContent move of %q",
+		t.Fatalf("native transition = %+v, want a 150ms Match move laid out at each box of %q",
 			transition, survivorID)
 	}
 	if _, ok := tt.Find("pane-motion:" + string(survivorID)); ok {

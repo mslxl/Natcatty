@@ -1148,9 +1148,17 @@ func (s *Surface) noteViewport(w, h float32) {
 	}
 	if s.viewportPinned {
 		if sameViewport(w, h, s.pinViewport) {
+			// The report is the pinned room within layout rounding. Keep the
+			// pinned values: the cached grid was computed for them, so the
+			// arrival frame does no grid math and delivers no extra PTY size.
 			s.viewportPinned = false
-			s.viewport = appview.Viewport{W: w, H: h}
 		}
+		return
+	}
+	if sameViewport(w, h, s.viewport) {
+		// Layout rounding alone does not move the room. Keeping the recorded
+		// values keeps the cached grid valid, so a repeated report costs no
+		// grid math.
 		return
 	}
 	s.viewport = appview.Viewport{W: w, H: h}

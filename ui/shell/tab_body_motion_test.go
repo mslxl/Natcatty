@@ -1597,9 +1597,9 @@ func TestTabBodyWarpLeavesASimultaneousPaneAnimationAlone(t *testing.T) {
 		t.Fatalf("the first Pane has no region label")
 	}
 	box := wm.rects[target].Column
-	// ScaleContent leaves the label off the Pane's final layout box while the
-	// native transition plays; an instant frame would rest it at the box
-	// exactly.
+	// The native transition lays the Pane out at the animated box, off the
+	// Pane's final box, while it plays; an instant frame would rest it at the
+	// box exactly.
 	if abs32(label.W-box.W) <= 1 {
 		t.Fatalf("the simultaneous Pane open was rested: label width %v, final box %v",
 			label.W, box.W)
@@ -2268,8 +2268,9 @@ func TestBatchTabCloseMidSwitchLeavesAPaneAnimationAlone(t *testing.T) {
 		t.Fatalf("the first Pane has no region label")
 	}
 	box := wm.rects[target].Column
-	// ScaleContent leaves the label off the Pane's final layout box while the
-	// native transition plays; an instant frame would rest it at the box.
+	// The native transition lays the Pane out at the animated box, off the
+	// Pane's final box, while it plays; an instant frame would rest it at the
+	// box.
 	if abs32(label.W-box.W) <= 1 {
 		t.Fatalf("the simultaneous Pane open was rested: label width %v, final box %v",
 			label.W, box.W)

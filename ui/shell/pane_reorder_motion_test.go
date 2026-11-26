@@ -207,9 +207,11 @@ func TestPaneReorderSameTabMovePlaysTheThreeParts(t *testing.T) {
 	if sibling.Spring == nil || sibling.Duration <= 0 {
 		t.Fatalf("the sibling is not on the reorder spring: %+v", sibling)
 	}
-	// The sibling shrinks in this scene, so the overlay carries it: MyGo's
-	// Match + ScaleContent would grow its final grid back to the old box,
-	// enlarging the terminal's text before it settled.
+	// The sibling shrinks in this scene, so the overlay carries it: the move
+	// recreates the split, whose new slot clips the shrinking side at once, so
+	// the native route could not show the whole-Pane shrink. The overlay lays
+	// the final-grid copy out at each animated box and clips it, keeping the
+	// terminal's text at its own size (ADR 0026).
 	if sibling.Native || len(run.nativePanes) != 0 {
 		t.Fatalf("a shrinking sibling was carried natively: visual %+v nativePanes %+v",
 			sibling, run.nativePanes)
@@ -377,7 +379,7 @@ func TestPaneReorderGatesEachPartWithItsOwnSwitch(t *testing.T) {
 			}
 			if len(run.nativePanes) != 0 {
 				// The scene's sibling shrinks, so no reorder sibling may take
-				// the native ScaleContent route.
+				// the native route.
 				t.Fatalf("a shrinking sibling was carried natively: %+v", run.nativePanes)
 			}
 			if got, want := run.spring != nil, tc.wantSib; got != want {
@@ -431,7 +433,7 @@ func findVisualOK(run *paneMotionRun, id model.PaneID, kind motion.VisualKind) (
 }
 
 // TestPaneReorderSiblingFallsBackToTheOverlay forces the route used when
-// MyGo's Match + ScaleContent cannot cross the changed tree: the sibling is
+// MyGo's Match cannot carry the part across the changed tree: the sibling is
 // an opaque copy over a mask at its final column, moving from its old box to
 // the final one, with the same spring and no per-frame reflow.
 func TestPaneReorderSiblingFallsBackToTheOverlay(t *testing.T) {
@@ -1337,12 +1339,13 @@ func signOf(v float32) int {
 // TestPaneReorderNativeSiblingKeepsVelocityOnReverse measures the production
 // native sibling route across an interruption, not just its bookkeeping. The
 // scene moves the larger Pane, so its sibling grows into the room it takes;
-// a growing sibling keeps MyGo's Match + ScaleContent route. The reverse move
-// recreates the split, so the sibling continues through the overlay, whose
-// spring must keep the measured velocity: it carries on in the pre-reverse
-// direction at the pre-reverse speed for a few milliseconds, then heads back
-// to the new target. A sibling re-keyed at the change would start from rest
-// and move the opposite way immediately.
+// a growing sibling keeps MyGo's native Match route, laid out at each animated
+// box so its content never raster-scales. The reverse move recreates the
+// split, so the sibling continues through the overlay, whose spring must keep
+// the measured velocity: it carries on in the pre-reverse direction at the
+// pre-reverse speed for a few milliseconds, then heads back to the new target.
+// A sibling re-keyed at the change would start from rest and move the opposite
+// way immediately.
 func TestPaneReorderNativeSiblingKeepsVelocityOnReverse(t *testing.T) {
 	scene := newReorderScene(t, reorderPreferences(true, true, true), paneMotionMode{labels: true})
 	g, tt, wm := scene.graph, scene.tt, scene.wm

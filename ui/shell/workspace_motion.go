@@ -24,11 +24,11 @@ import (
 const paneMotionZIndex = 1
 
 // paneMotionMode selects the routes a test observes. Production animates a
-// close's survivors natively: the ticket-17 measurement showed Match +
-// ScaleContent crossing the split a close collapses, unlike the split an open
-// creates (ticket 04, which the overlay still handles). Native keeps a Match
-// transition on every Pane so a layout change can start from the previous
-// frame's recorded box; overlayClose forces the older opaque-overlay survivor
+// close's survivors natively: the ticket-17 measurement showed Match crossing
+// the split a close collapses, unlike the split an open creates (ticket 04,
+// which the overlay still handles). Native keeps a Match transition on every
+// Pane so a layout change can start from the previous frame's recorded box;
+// overlayClose forces the older opaque-overlay survivor
 // route so the fallback stays exercised; overlayReorder forces every same-Tab
 // move sibling through the opaque overlay, so the growing sibling's fallback
 // stays exercised alongside the shrinking siblings production already routes
@@ -102,8 +102,8 @@ type paneMotionRun struct {
 	// spring is the exact ui.SpringOptions this run's native siblings and
 	// overlay copies use, kept so a test and an interruption read one value.
 	spring *ui.SpringOptions
-	// nativePanes are the siblings MyGo's Match + ScaleContent carries; their
-	// visuals are bookkeeping only and their real Panes are not masked.
+	// nativePanes are the siblings MyGo's native Match carries; their visuals
+	// are bookkeeping only and their real Panes are not masked.
 	nativePanes map[model.PaneID]bool
 	// final is every leaf Pane's final boxes. The overlay lays each whole
 	// Pane out at final[id].Column and an opaque mask covers the real Pane
@@ -985,9 +985,10 @@ func (wm *workspacePaneMotion) planMove(c *ui.Context, s *state.State,
 			// the split around the target, so MyGo sees a new element and its
 			// Match starts from rest. Paint that Pane with the opaque overlay
 			// instead, whose spring keeps the velocity measured above. A
-			// sibling that shrinks also takes the overlay: ScaleContent would
-			// grow its final grid back to the old box, enlarging its text
-			// before it settles.
+			// sibling that shrinks also takes the overlay: the recreated
+			// split's new slot clips the shrinking side at once, so the native
+			// route could not show the whole-Pane shrink; the overlay lays the
+			// final-grid copy out at each animated box and clips it.
 			shrinks := sibling.Column.W < seen.rect.W-0.5 ||
 				sibling.Column.H < seen.rect.H-0.5
 			if native && !shrinks && !wm.visualInFlight(prev, now, id) {
@@ -1737,8 +1738,8 @@ func (wm *workspacePaneMotion) nativeCloseEnabled() bool {
 }
 
 // nativeReorderEnabled reports that a same-Tab move's siblings use MyGo's
-// Match + ScaleContent route. Production takes it; overlayReorder forces the
-// opaque fallback a test compares with.
+// native Match route. Production takes it; overlayReorder forces the opaque
+// fallback a test compares with.
 func (wm *workspacePaneMotion) nativeReorderEnabled() bool {
 	if wm.mode.overlayReorder {
 		return false
@@ -1849,12 +1850,18 @@ func (wm *workspacePaneMotion) nativeTransition(id model.PaneID) (ui.ElementTran
 			}
 		}
 	}
+	// ScaleContent stays off on purpose. It lays the Pane out once at the final
+	// size and raster-scales that paint to the shown box, so a growing Pane's
+	// text starts smaller than life and grows back — the shrink defect mirrored
+	// on the other side of the change (ADR 0026). Without it MyGo lays the Pane
+	// out at each animated box; the Pane clips, and the terminal draws its
+	// pinned final grid 1:1, so its text never changes size. The viewport pin
+	// keeps those intermediate layouts free of grid math and PTY resizes.
 	transition := ui.ElementTransition{
-		Ease:         ui.EaseOut,
-		Position:     true,
-		Size:         true,
-		ScaleContent: true,
-		Match:        motion.PaneMatch{ID: id},
+		Ease:     ui.EaseOut,
+		Position: true,
+		Size:     true,
+		Match:    motion.PaneMatch{ID: id},
 	}
 	if spring != nil {
 		transition.Animation = spring

@@ -292,9 +292,15 @@ func (s *realTerminalSurface) noteViewport(w, h float32) {
 	}
 	if s.viewportPinned {
 		if sameViewport(w, h, s.pinViewport) {
+			// The report is the pinned room within layout rounding; keep the
+			// pinned values so the arrival frame does no grid math.
 			s.viewportPinned = false
-			s.viewport = appview.Viewport{W: w, H: h}
 		}
+		return
+	}
+	if sameViewport(w, h, s.viewport) {
+		// Layout rounding alone does not move the room; keep the recorded
+		// values so the cached grid stays valid.
 		return
 	}
 	s.viewport = appview.Viewport{W: w, H: h}

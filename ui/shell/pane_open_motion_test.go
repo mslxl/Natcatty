@@ -507,15 +507,15 @@ func startPaneOpenScene(t *testing.T, mode paneMotionMode) *paneOpenScene {
 }
 
 // TestPaneOpenOldPaneShrinkFallsBackToTheOverlayAcrossTheNewSplit is ticket
-// 16's acceptance criterion 4. Ticket 04 measured that MyGo's native
-// Match + ScaleContent cannot carry the old Pane's whole-box shrink across
-// the split the change just created: the new split clips the shrinking side,
-// so the real Pane's visible box is already its final slot from the first
-// frame and no whole-Pane shrink shows. Ticket 16's Note accepts the opaque
-// overlay fallback, which is production's route. This test observes both
-// routes at the same mid-run instant on the same real split, then asserts
-// both end at the same final boxes, viewports and grids with exactly one PTY
-// resize per Pane.
+// 16's acceptance criterion 4. Ticket 04 measured that MyGo's native Match
+// cannot carry the old Pane's whole-box shrink across the split the change
+// just created: the new split clips the shrinking side, so the real Pane's
+// visible box is already its final slot from the first frame and no
+// whole-Pane shrink shows. Ticket 16's Note accepts the opaque overlay
+// fallback, which is production's route. This test observes both routes at
+// the same mid-run instant on the same real split, then asserts both end at
+// the same final boxes, viewports and grids with exactly one PTY resize per
+// Pane.
 func TestPaneOpenOldPaneShrinkFallsBackToTheOverlayAcrossTheNewSplit(t *testing.T) {
 	overlay := startPaneOpenScene(t, paneMotionMode{labels: true})
 	native := startPaneOpenScene(t, paneMotionMode{native: true, labels: true})
@@ -542,7 +542,7 @@ func TestPaneOpenOldPaneShrinkFallsBackToTheOverlayAcrossTheNewSplit(t *testing.
 			overlay.k, overlayCopy.W, overlayFinal.W, overlay.start.Column.W)
 	}
 
-	// The native route at the same instant: the real Pane's layout box is its
+	// The native route at the same instant: the Pane's recorded box is its
 	// final box, and its visible box (the PaneRegion label, clipped to the new
 	// split's slot) already fills that slot instead of starting from the old
 	// width. Ticket 04's limitation, and the reason production overlays the
@@ -587,15 +587,12 @@ func TestPaneOpenOldPaneShrinkFallsBackToTheOverlayAcrossTheNewSplit(t *testing.
 			overlay.k, overlayCopy.W, nativeLabel.W)
 	}
 
-	// MyGo exposes no accessor for the transition attached to a built
-	// element, so the test cannot read it back from the Pane. The attached
-	// ScaleContent leaves its trace instead: while the run plays, the label's
-	// visible box is wider than the Pane's own final layout box, because the
-	// scaled Pane reaches into the split's gutter. Had the view not attached
-	// the helper's transition to the built Pane, the label would be that box.
-	// The helper's fields are asserted next.
+	// The visible Pane reaches into the split's 4-DIP drop gutter past its own
+	// recorded box, so the label is the slot's visible edge, not a stale copy
+	// laid out at the old width. MyGo exposes no accessor for the transition
+	// attached to a built element, so the helper's fields are asserted next.
 	if nativeLabel.W <= nativeBox.W+1 {
-		t.Fatalf("the native Pane's label at k=%v is %v wide, not the final box %v; the ScaleContent transform is not attached",
+		t.Fatalf("the native Pane's label at k=%v is %v wide, not the final box %v; the Pane does not fill its new slot",
 			native.k, nativeLabel.W, nativeBox)
 	}
 	if _, ok := native.tt.Find("pane-motion:" + string(native.oldID)); ok {
@@ -607,13 +604,13 @@ func TestPaneOpenOldPaneShrinkFallsBackToTheOverlayAcrossTheNewSplit(t *testing.
 		t.Fatalf("the native mode does not build the old Pane's transition")
 	}
 	if transition.Duration != 200*time.Millisecond || !transition.Position || !transition.Size ||
-		!transition.ScaleContent || transition.Match != (motion.PaneMatch{ID: native.oldID}) {
-		t.Fatalf("native transition = %+v, want a 200ms Match + ScaleContent move of %q",
+		transition.ScaleContent || transition.Match != (motion.PaneMatch{ID: native.oldID}) {
+		t.Fatalf("native transition = %+v, want a 200ms Match move laid out at each box of %q",
 			transition, native.oldID)
 	}
 
-	// Both routes end at the same final frame. Let the native Match's tiny
-	// ScaleContent residue settle before comparing the labels exactly.
+	// Both routes end at the same final frame. Let the native Match's layout
+	// residue settle before comparing the labels exactly.
 	for _, scene := range []*paneOpenScene{overlay, native} {
 		scene.tt.Advance(400 * time.Millisecond)
 		scene.tt.Frame()
