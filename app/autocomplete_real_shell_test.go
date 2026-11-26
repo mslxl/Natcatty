@@ -88,8 +88,15 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 			t.Fatalf("%s: the typed line is %q, want %q", name, session.Snapshot().Input, prefix)
 		}
 		tester.Frame()
+		// The list is request-driven: typing never opens it, the first Tab
+		// does, and only then can a row be accepted or clicked.
+		if tester.HasText(suggestion) {
+			t.Fatalf("%s: the popup opened on typing: %v", name, tester.Texts())
+		}
+		tester.Key(0, ui.KeyTab)
+		tester.Frame()
 		if !tester.HasText(suggestion) {
-			t.Fatalf("%s: the popup does not show the suggestion: %v", name, tester.Texts())
+			t.Fatalf("%s: the first Tab did not open the popup: %v", name, tester.Texts())
 		}
 		accept()
 		if !realShellWait(t, func() bool { return session.Snapshot().Input == suggestion }) {
@@ -154,7 +161,7 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 // state autocomplete depends on. A fast command's prompt can arrive inside the
 // fallback's guard window; once that happened with no further output, Running
 // stayed true and autocomplete stayed suppressed until Ctrl+C. Running a real
-// command must clear Running and the next typed prefix must open the popup
+// command must clear Running and the next typed prefix must complete again
 // without any interrupt.
 func TestSurfaceAutocompleteAfterAFastRealCommand(t *testing.T) {
 	command := realShellCommand(t)
@@ -241,8 +248,13 @@ func TestSurfaceAutocompleteAfterAFastRealCommand(t *testing.T) {
 		t.Fatalf("the typed line is %q, want %q", session.Snapshot().Input, prefix)
 	}
 	tester.Frame()
-	if !tester.HasText(suggestion) {
+	if !realShellWait(t, func() bool { return len(surface.SuggestionRows()) > 0 }) {
 		t.Fatalf("autocomplete stayed suppressed after a fast command: %v", tester.Texts())
+	}
+	tester.Key(0, ui.KeyTab)
+	tester.Frame()
+	if !tester.HasText(suggestion) {
+		t.Fatalf("the popup did not open after a fast command: %v", tester.Texts())
 	}
 }
 

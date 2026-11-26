@@ -11,12 +11,17 @@ import (
 
 // refreshSuggestions recomputes the popup rows from the line being typed. It
 // runs once per frame, so the popup follows the Session's input buffer rather
-// than duplicating terminal key handling. Suggestions are suppressed while a
-// command runs: Tab must reach vim, less, and other full-screen programs even
-// when the typed text matches history. A program input prompt (a colon-label
-// read such as "Email: ") is the exception: the program is waiting for typed
-// text, so history and Vault Snippets may be offered there. Dismissing the
-// popup keeps it hidden until the input changes again.
+// than duplicating terminal key handling. The popup is not automatic: typing
+// never opens it, because a list that appears on the first keystroke and
+// leaves on the next flashes over the terminal the user is reading. The
+// popup answers a request instead — Tab, or a click after the hint showed —
+// and stays until the line changes. The ghost hint is the passive half: it
+// draws the first match inline and needs no key. Suggestions are suppressed
+// while a command runs: Tab must reach vim, less, and other full-screen
+// programs even when the typed text matches history. A program input prompt
+// (a colon-label read such as "Email: ") is the exception: the program is
+// waiting for typed text, so history and Vault Snippets may be offered
+// there. Dismissing the popup keeps it hidden until the input changes again.
 func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 	s.refreshSuggestionsFor(input, cwd, commandRunning, false)
 }
@@ -25,8 +30,8 @@ func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 // A key that acts on the rows (Tab accepting one) cannot wait out the delay the
 // popup uses: pressing Tab within the debounce window after typing looked at an
 // empty list, declined the key, and the Pane sent a literal tab to the shell.
-// skipDelay recomputes the rows right away; the delay still governs when the
-// popup first appears, since the frame path keeps calling without it.
+// skipDelay recomputes the rows right away; the delay still governs the ghost,
+// since an inline hint that tracks every keystroke flickers with the echo.
 func (s *Surface) refreshSuggestionsFor(input, cwd string, commandRunning, skipDelay bool) {
 	popup, ghost := false, false
 	if s.options.AutocompleteDisplay != nil {
@@ -45,6 +50,7 @@ func (s *Surface) refreshSuggestionsFor(input, cwd string, commandRunning, skipD
 		s.suggestions = nil
 		s.suggestionIndex = 0
 		s.suggestionInput = input
+		s.suggestionRequested = false
 		s.showAutocomplete = false
 		s.showGhost = false
 		return
@@ -58,6 +64,9 @@ func (s *Surface) refreshSuggestionsFor(input, cwd string, commandRunning, skipD
 		s.suggestionIndex = 0
 		s.suggestions = nil
 		s.suggestionDismissed = false
+		// A changed line is a new completion: the request the popup answered
+		// was for the text before it, so the list closes until Tab asks again.
+		s.suggestionRequested = false
 		s.suggestionPending = time.Now()
 		if s.suggestionTimer != nil {
 			s.suggestionTimer.Stop()
@@ -75,7 +84,12 @@ func (s *Surface) refreshSuggestionsFor(input, cwd string, commandRunning, skipD
 		s.suggestionLocale = s.locale
 		s.suggestions = nil
 	}
-	if !skipDelay && delay > 0 && time.Since(s.suggestionPending) < time.Duration(delay)*time.Millisecond {
+	if !skipDelay && delay > 0 && time.Since(s.suggestionPending) < time.Duration(delay)*time.Millisecond && !s.suggestionRequested {
+		// The debounce gates the passive layers: the ghost tracks every
+		// keystroke and would flicker with the echo. An explicitly requested
+		// popup is outside it — the user asked for the list, and closing it on
+		// the next frame because the last keystroke is still inside the window
+		// would make Tab's answer visible for one frame only.
 		s.showAutocomplete = false
 		s.showGhost = false
 		return
@@ -104,7 +118,7 @@ func (s *Surface) refreshSuggestionsFor(input, cwd string, commandRunning, skipD
 	if s.suggestionIndex >= len(s.suggestions) {
 		s.suggestionIndex = 0
 	}
-	s.showAutocomplete = popup && len(s.suggestions) > 0
+	s.showAutocomplete = popup && len(s.suggestions) > 0 && s.suggestionRequested
 	s.showGhost = ghost && len(s.suggestions) > 0
 }
 
@@ -152,22 +166,54 @@ func (s *Surface) handleAutocompleteKey(mods ui.Modifiers, key ui.Key) bool {
 	s.refreshSuggestionsFor(snapshot.Input, snapshot.CWD, snapshot.Command.Running, true)
 	switch key {
 	case ui.KeyTab:
-		if len(s.suggestions) == 0 || (!s.showAutocomplete && !s.showGhost) {
+		if len(s.suggestions) == 0 {
+			// No completion exists for this line: the key belongs to the
+			// shell, whose own completion (readline, zle, PSReadLine) answers it.
 			return false
 		}
+		if s.showAutocomplete {
+			// The popup is open: Tab accepts the selected row.
+			s.acceptSuggestion(s.suggestionIndex)
+			return true
+		}
+		popupEnabled := false
+		if s.options.AutocompleteDisplay != nil {
+			popupEnabled, _ = s.options.AutocompleteDisplay()
+		}
+		if popupEnabled {
+			// The rows were just computed for this key: the first Tab opens
+			// the list instead of committing a completion the user has not
+			// seen. The key is consumed either way — a shell completion that
+			// fires under the popup's rows would insert text the user did not
+			// pick.
+			s.suggestionRequested = true
+			s.showAutocomplete = true
+			s.redraw()
+			return true
+		}
+		if !s.showGhost {
+			// Neither layer can act on the rows, so there is nothing to accept.
+			return false
+		}
+		// Ghost-only completion has no list to open: Tab accepts the hint's row.
 		s.acceptSuggestion(s.suggestionIndex)
+		return true
 	case ui.KeyEscape:
-		if len(s.suggestions) == 0 {
+		if !s.showAutocomplete {
 			return false
 		}
 		s.dismissSuggestions()
 	case ui.KeyUp:
-		if len(s.suggestions) == 0 {
+		// The keys steer the open list. With the list closed they are the
+		// shell's own — history recall, a menu's selection — even when the rows
+		// exist, because rows exist for every typed prefix and the user never
+		// asked to see them.
+		if !s.showAutocomplete {
 			return false
 		}
 		s.moveSuggestion(-1)
 	case ui.KeyDown:
-		if len(s.suggestions) == 0 {
+		if !s.showAutocomplete {
 			return false
 		}
 		s.moveSuggestion(1)
@@ -214,6 +260,7 @@ func (s *Surface) acceptSuggestion(index int) {
 	s.suggestions = nil
 	s.suggestionIndex = 0
 	s.suggestionDismissed = true
+	s.suggestionRequested = false
 	s.showAutocomplete = false
 	s.showGhost = false
 	s.redraw()
@@ -223,6 +270,7 @@ func (s *Surface) dismissSuggestions() {
 	s.suggestions = nil
 	s.suggestionIndex = 0
 	s.suggestionDismissed = true
+	s.suggestionRequested = false
 	s.showAutocomplete = false
 	s.showGhost = false
 	s.redraw()

@@ -419,6 +419,11 @@ type Surface struct {
 	suggestionProgram   bool
 	suggestionPending   time.Time
 	suggestionDismissed bool
+	// suggestionRequested reports that the user asked for the completion list
+	// on the line being typed (Tab, or a click). Typing never opens the popup
+	// on its own; the request resets when the input changes, so the list
+	// follows the line it was asked for and closes when that line is gone.
+	suggestionRequested bool
 	suggestionTimer     *time.Timer
 	showAutocomplete    bool
 	showGhost           bool

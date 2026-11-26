@@ -284,15 +284,24 @@ func TestTabAcceptsACapturedCommandWhileTheSessionIsOpen(t *testing.T) {
 		t.Fatalf("the typed line is %q, want %q", shell.session.Snapshot().Input, capturePrefix)
 	}
 	pumpTUIFrames(shell.tester, 300*time.Millisecond)
+	// Typing never opens the list: the count stays at the header alone, and the
+	// first Tab — not a keystroke — asks for completion. The popup row is the
+	// one extra occurrence.
+	if got := shell.commandTextCount(); got != beforePopup {
+		t.Fatalf("the popup opened on typing (%d → %d occurrences): %v",
+			beforePopup, got, shell.tester.Texts())
+	}
+	shell.tester.Key(0, ui.KeyTab)
+	pumpTUIFrames(shell.tester, 100*time.Millisecond)
 	if got := shell.commandTextCount(); got <= beforePopup {
-		t.Fatalf("no suggestion popup for the captured command (%d → %d occurrences): %v",
+		t.Fatalf("the first Tab did not open the popup (%d → %d occurrences): %v",
 			beforePopup, got, shell.tester.Texts())
 	}
 
 	before := strings.Count(shell.surface.ScreenText(), captureMarker)
 	shell.tester.Key(0, ui.KeyTab)
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == captureCommand }) {
-		t.Fatalf("Tab left the line as %q, want %q — the byte went to the shell",
+		t.Fatalf("the accepting Tab left the line as %q, want %q — the byte went to the shell",
 			shell.session.Snapshot().Input, captureCommand)
 	}
 	shell.runAcceptedLine(t, before+2)
@@ -311,10 +320,18 @@ func TestTabInsideTheDebounceWindowCompletesInARealShell(t *testing.T) {
 	shell.runCaptureCommand(t)
 	shell.typePrefixWithoutPopup(t)
 
+	// The first Tab inside the debounce window opens the list — the key path
+	// never rides the delay — and the second accepts.
+	shell.tester.Key(0, ui.KeyTab)
+	pumpTUIFrames(shell.tester, 100*time.Millisecond)
+	if got := shell.commandTextCount(); got == 0 {
+		t.Fatalf("the first Tab inside the debounce window opened nothing: %v", shell.tester.Texts())
+	}
+
 	before := strings.Count(shell.surface.ScreenText(), captureMarker)
 	shell.tester.Key(0, ui.KeyTab)
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == captureCommand }) {
-		t.Fatalf("Tab inside the debounce window left the line as %q, want %q — the byte went to the shell",
+		t.Fatalf("the accepting Tab inside the debounce window left the line as %q, want %q — the byte went to the shell",
 			shell.session.Snapshot().Input, captureCommand)
 	}
 	shell.runAcceptedLine(t, before+2)
@@ -334,15 +351,24 @@ func TestTabAcceptsACapturedCommandInARealBash(t *testing.T) {
 		t.Fatalf("the typed line is %q, want %q", shell.session.Snapshot().Input, capturePrefix)
 	}
 	pumpTUIFrames(shell.tester, 300*time.Millisecond)
+	// Typing never opens the list: the count stays at the header alone, and the
+	// first Tab — not a keystroke — asks for completion. The popup row is the
+	// one extra occurrence.
+	if got := shell.commandTextCount(); got != beforePopup {
+		t.Fatalf("the popup opened on typing (%d → %d occurrences): %v",
+			beforePopup, got, shell.tester.Texts())
+	}
+	shell.tester.Key(0, ui.KeyTab)
+	pumpTUIFrames(shell.tester, 100*time.Millisecond)
 	if got := shell.commandTextCount(); got <= beforePopup {
-		t.Fatalf("no suggestion popup for the captured command (%d → %d occurrences): %v",
+		t.Fatalf("the first Tab did not open the popup (%d → %d occurrences): %v",
 			beforePopup, got, shell.tester.Texts())
 	}
 
 	before := strings.Count(shell.surface.ScreenText(), captureMarker)
 	shell.tester.Key(0, ui.KeyTab)
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == captureCommand }) {
-		t.Fatalf("Tab left the line as %q, want %q — the byte went to the shell",
+		t.Fatalf("the accepting Tab left the line as %q, want %q — the byte went to the shell",
 			shell.session.Snapshot().Input, captureCommand)
 	}
 	shell.runAcceptedLine(t, before+2)

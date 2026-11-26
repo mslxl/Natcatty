@@ -52,6 +52,19 @@ func (f recordingFactory) Open(context.Context, appsession.StartSpec) (appsessio
 	return f.transport, nil
 }
 
+// openSuggestionPopup performs the first Smart Tab: the keypress that asks for
+// the completion list. Under the request-driven popup, typing never opens it,
+// so a test that exercises acceptance, navigation, or layout starts here. It
+// returns false when Tab was not taken — the same failure the caller would
+// report, with the setup named instead.
+func openSuggestionPopup(t *testing.T, surface *Surface) {
+	t.Helper()
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatalf("the first Tab did not open the popup: %+v", surface.SuggestionRows())
+	}
+}
+
+
 // TestInvalidateSuggestionsDropsADeletedCommand proves an open popup cannot
 // keep offering a row the shared journal no longer has: invalidating it makes
 // the next frame recompute from the reloaded source, and Tab cannot accept the
@@ -88,6 +101,11 @@ func TestInvalidateSuggestionsDropsADeletedCommand(t *testing.T) {
 	tester.Type("gi")
 	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	// Typing never opens the popup on its own; the first Tab asks for it.
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with a suggestion available")
 	}
 	tester.Frame()
 	if len(surface.SuggestionRows()) != 1 {
@@ -151,6 +169,14 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 	case <-time.After(3 * time.Second):
 		t.Fatal("the suggestion provider was not called")
 	}
+	// Typing alone must not open the popup: it answers an explicit request.
+	if tester.HasText("git status") {
+		t.Fatalf("the popup opened on typing: %v", tester.Texts())
+	}
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with suggestions available")
+	}
+	tester.Frame()
 	if !tester.HasText("git status") || !tester.HasText("git stash") {
 		t.Fatalf("the popup does not show the suggestions: %v", tester.Texts())
 	}
@@ -211,6 +237,11 @@ func TestTabCompletesAfterThePopupWasDismissed(t *testing.T) {
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	// Open the popup with the first Tab.
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with a suggestion available")
+	}
+	tester.Frame()
 	if !tester.HasText("git status") {
 		t.Fatalf("the popup does not show the suggestion: %v", tester.Texts())
 	}
@@ -222,8 +253,14 @@ func TestTabCompletesAfterThePopupWasDismissed(t *testing.T) {
 		t.Fatalf("Escape left the popup open: %v", tester.Texts())
 	}
 
-	// Tab asks for completion again: it must accept the row that the popup
-	// still has for this line, and never reach the shell as a tab byte.
+	// Tab asks for completion again: the first press re-opens the list rather
+	// than accepting a row the user is no longer looking at, and the second
+	// accepts it. Neither reaches the shell as a tab byte.
+	tester.Key(0, ui.KeyTab)
+	tester.Frame()
+	if !tester.HasText("git status") {
+		t.Fatalf("the first Tab after dismissal did not re-open the popup: %v", tester.Texts())
+	}
 	tester.Key(0, ui.KeyTab)
 	if !waitFor(t, func() bool {
 		return bytes.Contains([]byte(transport.input()), []byte("\x7f\x7fgit status"))
@@ -273,13 +310,14 @@ func TestSurfaceAutocompleteRefusesMultilineSuggestionWithoutBracketedPaste(t *t
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	openSuggestionPopup(t, surface)
 	if len(surface.SuggestionRows()) != 1 {
 		t.Fatalf("popup rows = %+v, want the multiline suggestion", surface.SuggestionRows())
 	}
 	before := transport.input()
 
 	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
-		t.Fatal("Tab was not taken with a suggestion available")
+		t.Fatal("Tab was not taken with the popup open")
 	}
 	if got := transport.input(); got != before {
 		t.Fatalf("Tab sent unsafe bytes: %q", got)
@@ -346,8 +384,9 @@ func TestSurfaceAutocompleteInsertsMultilineSuggestionAsBracketedPaste(t *testin
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	openSuggestionPopup(t, surface)
 	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
-		t.Fatal("Tab was not taken with a suggestion available")
+		t.Fatal("Tab was not taken with the popup open")
 	}
 	want := "\x7f\x7f\x1b[200~" + command + "\x1b[201~"
 	if !waitFor(t, func() bool { return bytes.Contains([]byte(transport.input()), []byte(want)) }) {
@@ -435,8 +474,26 @@ func TestSurfaceAutocompleteKeysDismissSelectAndAccept(t *testing.T) {
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	// Typing alone never opens the list; the arrow keys are the shell's own
+	// until the user asks. Rows exist for every typed prefix, so a closed
+	// popup that consumed them would break readline's history recall on every
+	// line.
+	if tester.HasText("gi status") {
+		t.Fatalf("the popup opened on typing: %v", tester.Texts())
+	}
+	if surface.handleAutocompleteKey(0, ui.KeyUp) {
+		t.Fatal("Up was consumed while the popup was closed")
+	}
+	if surface.handleAutocompleteKey(0, ui.KeyDown) {
+		t.Fatal("Down was consumed while the popup was closed")
+	}
+	if surface.handleAutocompleteKey(0, ui.KeyEscape) {
+		t.Fatal("Escape was consumed while the popup was closed")
+	}
+	openSuggestionPopup(t, surface)
+	tester.Frame()
 	if !tester.HasText("gi status") {
-		t.Fatalf("popup missing: %v", tester.Texts())
+		t.Fatalf("popup missing after Tab: %v", tester.Texts())
 	}
 
 	// Down selects the second row; Escape dismisses the popup but leaves the
@@ -458,15 +515,27 @@ func TestSurfaceAutocompleteKeysDismissSelectAndAccept(t *testing.T) {
 		t.Fatalf("Escape changed the typed line to %q", session.Snapshot().Input)
 	}
 
-	// Typing again brings the popup back; Tab accepts the selected command
-	// instead of sending a tab character.
+	// Typing again leaves the popup closed — the dismissal held until the line
+	// changed, and the new line was never asked about. The first Tab opens the
+	// list for the new input and the second accepts the selected command,
+	// neither sending a tab character.
 	tester.Type("t")
 	if !waitFor(t, func() bool { return session.Snapshot().Input == "git" }) {
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	if tester.HasText("git status") {
+		t.Fatalf("the popup re-opened on typing: %v", tester.Texts())
+	}
 	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
-		t.Fatalf("Tab was not taken with suggestions: %v", surface.SuggestionRows())
+		t.Fatalf("the first Tab was not taken: %v", surface.SuggestionRows())
+	}
+	tester.Frame()
+	if !tester.HasText("git status") {
+		t.Fatalf("the first Tab did not open the popup: %v", tester.Texts())
+	}
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatalf("the second Tab was not taken: %v", surface.SuggestionRows())
 	}
 	if !waitFor(t, func() bool {
 		return bytes.Contains([]byte(transport.input()), []byte("\x7f\x7f\x7fgit status"))
@@ -519,11 +588,18 @@ func TestSurfaceAutocompleteHonorsTheDebounceAndRunningCommand(t *testing.T) {
 	if tester.HasText("gi status") {
 		t.Fatalf("suggestions appeared before the delay: %v", tester.Texts())
 	}
+	// The debounce gates the rows' refresh, and even after it the list stays
+	// closed: only an explicit Tab asks for it. The Tab key path skips the
+	// delay (see TestSurfaceTabTakesASuggestionInsideTheDebounceWindow), so
+	// this frame waits the delay out before asking.
 	if !waitFor(t, func() bool {
 		tester.Frame()
-		return tester.HasText("gi status")
+		return len(surface.SuggestionRows()) > 0
 	}) {
-		t.Fatalf("suggestions never appeared after the delay: %v", tester.Texts())
+		t.Fatal("the rows were never computed after the delay")
+	}
+	if tester.HasText("gi status") {
+		t.Fatalf("the popup opened without a request: %v", tester.Texts())
 	}
 
 	// Submit a command: while it runs, suggestions stay closed and Tab is not
@@ -586,8 +662,17 @@ func TestSurfaceTabTakesASuggestionInsideTheDebounceWindow(t *testing.T) {
 	if tester.HasText("gi status") {
 		t.Fatalf("the popup appeared before the delay: %v", tester.Texts())
 	}
+	// The first Tab — pressed inside the debounce window — must still open the
+	// list rather than fall through to the shell, and the second accepts.
 	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
 		t.Fatalf("Tab was not taken inside the debounce window: %v", surface.SuggestionRows())
+	}
+	tester.Frame()
+	if !tester.HasText("gi status") {
+		t.Fatalf("the first Tab did not open the popup: %v", tester.Texts())
+	}
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatalf("the accepting Tab was not taken: %v", surface.SuggestionRows())
 	}
 	if !waitFor(t, func() bool {
 		return bytes.Contains([]byte(transport.input()), []byte("\x7f\x7fgi status"))
@@ -642,6 +727,8 @@ func TestSurfaceAutocompleteDoesNotResizeTheTerminal(t *testing.T) {
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	tester.Frame()
+	openSuggestionPopup(t, surface)
 	tester.Frame()
 	if !tester.HasText("gi status") {
 		t.Fatalf("the popup did not show: %v", tester.Texts())
@@ -710,6 +797,8 @@ func TestSurfaceAutocompletePopupFloatsAboveThePrompt(t *testing.T) {
 	}
 	tester.Frame()
 	tester.Frame()
+	openSuggestionPopup(t, surface)
+	tester.Frame()
 	if !tester.HasText("gi status") {
 		t.Fatalf("the popup did not show: %v", tester.Texts())
 	}
@@ -776,6 +865,8 @@ func TestAutocompletePopupShowsAndRelocalizesDescriptions(t *testing.T) {
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	tester.Frame()
+	openSuggestionPopup(t, surface)
 	tester.Frame()
 	if !tester.HasText(description) {
 		t.Fatalf("the popup did not show %q: %v", description, tester.Texts())
@@ -876,12 +967,14 @@ func TestAutocompleteOffersSnippetsAtProgramPrompt(t *testing.T) {
 		rows[0].Text != "work@example.com" {
 		t.Fatalf("popup rows = %+v, want the snippet", rows)
 	}
+	openSuggestionPopup(t, surface)
+	tester.Frame()
 	if !tester.HasText("Work email") {
 		t.Fatalf("the popup does not show the snippet label: %v", tester.Texts())
 	}
 
 	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
-		t.Fatal("Tab was not taken with a snippet available")
+		t.Fatal("Tab was not taken with the popup open")
 	}
 	if !waitFor(t, func() bool {
 		return strings.Contains(transport.Input(), "\x7f\x7fwork@example.com")
@@ -920,9 +1013,10 @@ func TestAutocompleteMidLineAcceptanceKeepsTheSuffix(t *testing.T) {
 		t.Fatalf("tracked cursor = %d, want 2", session.Snapshot().InputCursor)
 	}
 	tester.Frame()
+	openSuggestionPopup(t, surface)
 	before := strings.Count(transport.Input(), "\x7f")
 	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
-		t.Fatal("Tab was not taken with a snippet available")
+		t.Fatal("Tab was not taken with the popup open")
 	}
 	if !waitFor(t, func() bool {
 		return strings.Count(transport.Input(), "\x7f") == before+2
@@ -953,12 +1047,13 @@ func TestAutocompleteRefusesUnsafeMultilineSnippetAtProgramPrompt(t *testing.T) 
 		t.Fatalf("typed input = %q", session.Snapshot().Input)
 	}
 	tester.Frame()
+	openSuggestionPopup(t, surface)
 	if len(surface.SuggestionRows()) != 1 {
 		t.Fatalf("popup rows = %+v, want the multiline snippet", surface.SuggestionRows())
 	}
 	before := transport.Input()
 	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
-		t.Fatal("Tab was not taken with a snippet available")
+		t.Fatal("Tab was not taken with the popup open")
 	}
 	if got := transport.Input(); got != before {
 		t.Fatalf("Tab sent unsafe bytes: %q", got)

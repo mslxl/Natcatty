@@ -57,16 +57,29 @@ func historySuggestions(input, _, _ string) []autocomplete.Suggestion {
 // get a tab through when Tab accepted a completion. No desktop commits Tab's
 // text today — macOS makes it a command selector and mygo drops Windows's
 // control characters — so the tester models the contract here; the real-shell
-// test in app/ covers the reported flow end to end.
+// test in app/ covers the reported flow end to end. The first keypress opens
+// the request-driven list, the second accepts: neither may leak a tab byte.
 func TestTabAcceptsACompletionWithoutSendingATab(t *testing.T) {
-	_, transport, tester := keyEchoSurface(t, historySuggestions)
-	if !tester.HasText("gi status") {
-		t.Fatalf("popup missing: %v", tester.Texts())
+	surface, transport, tester := keyEchoSurface(t, historySuggestions)
+	// Typing never opens the list on its own.
+	if tester.HasText("gi status") {
+		t.Fatalf("the popup opened on typing: %v", tester.Texts())
 	}
 
 	tester.TypeKey(0, ui.KeyTab, "\t")
+	tester.Frame()
+	if !tester.HasText("gi status") {
+		t.Fatalf("the first Tab did not open the popup: %v", tester.Texts())
+	}
+	if bytes.Contains([]byte(transport.input()), []byte("\t")) {
+		t.Fatalf("the opening Tab reached the shell: %q", transport.input())
+	}
+	if !surface.showAutocomplete {
+		t.Fatal("the popup is not marked open after the first Tab")
+	}
+	tester.TypeKey(0, ui.KeyTab, "\t")
 	if !waitFor(t, func() bool { return strings.Contains(transport.input(), "\x7f\x7fgi status") }) {
-		t.Fatalf("Tab did not accept the completion: %q", transport.input())
+		t.Fatalf("the second Tab did not accept the completion: %q", transport.input())
 	}
 	// The accepted text and the tab byte come from the same key. Give a
 	// delayed duplicate a moment to show up before judging.
