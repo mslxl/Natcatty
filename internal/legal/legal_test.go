@@ -117,7 +117,7 @@ func TestCheckRepositoryRejectsAMissingOrIncompleteDocument(t *testing.T) {
 	writeFile(t, filepath.Join(root, "LICENSE"), "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n")
 	writeFile(t, filepath.Join(root, "NOTICE"), "GPL-3.0-or-later\nmodified version\n")
 	writeFile(t, filepath.Join(root, "resources", ThirdPartyNoticesFile),
-		"MyGo libghostty-vt EternalTerminal Netcatty mosh-go 0284bd652aab3dfff5b0b74945c23901d7537b61\n")
+		"MyGo libghostty-vt EternalTerminal Netcatty mosh-go 0284bd652aab3dfff5b0b74945c23901d7537b61 Maple Mono NF SIL OPEN FONT LICENSE Version 1.1\n")
 	writeFile(t, filepath.Join(root, "mygo.json"), `{"version":"1.2.3","resources":["LICENSE","NOTICE"]}`)
 	if err := CheckRepository(root); err != nil {
 		t.Fatalf("the minimal legal tree was rejected: %v", err)
@@ -168,7 +168,7 @@ func writePackagedTree(t *testing.T, root string) {
 	writeFile(t, filepath.Join(root, LicenseFile), "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n")
 	writeFile(t, filepath.Join(root, NoticeFile), "GPL-3.0-or-later\nmodified version\n")
 	writeFile(t, filepath.Join(root, ThirdPartyNoticesFile),
-		"MyGo libghostty-vt EternalTerminal Netcatty mosh-go 0284bd652aab3dfff5b0b74945c23901d7537b61\n")
+		"MyGo libghostty-vt EternalTerminal Netcatty mosh-go 0284bd652aab3dfff5b0b74945c23901d7537b61 Maple Mono NF SIL OPEN FONT LICENSE Version 1.1\n")
 	writeFile(t, filepath.Join(root, "mygo.json"), `{"version":"1.2.3"}`)
 	writeFile(t, filepath.Join(root, SourceOfferFile), SourceOfferDocument("1.2.3"))
 }
@@ -238,6 +238,39 @@ func TestThirdPartyNoticesAttributeVendoredETGoAndProtobuf(t *testing.T) {
 	for _, name := range []string{"LICENSE", "NOTICE", "PROVENANCE.md"} {
 		if _, err := os.Stat(filepath.Join(vendored, name)); err != nil {
 			t.Errorf("vendored et-go document %s: %v", name, err)
+		}
+	}
+}
+
+func TestBundledMapleMonoNFLicenseAndAttributionAreShipped(t *testing.T) {
+	root := filepath.Join("..", "..")
+	fontDir := filepath.Join(root, "resources", "fonts", "maple-mono-nf")
+	licenseText, err := os.ReadFile(filepath.Join(fontDir, "LICENSE.txt"))
+	if err != nil {
+		t.Fatalf("read bundled Maple Mono NF LICENSE.txt: %v", err)
+	}
+	for _, want := range []string{
+		"Copyright 2022 The Maple Mono Project Authors",
+		"SIL OPEN FONT LICENSE Version 1.1",
+	} {
+		if !strings.Contains(string(licenseText), want) {
+			t.Errorf("resources/fonts/maple-mono-nf/LICENSE.txt does not contain %q", want)
+		}
+	}
+	notices, err := os.ReadFile(filepath.Join(root, "resources", ThirdPartyNoticesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Maple Mono NF",
+		"https://github.com/subframe7536/maple-font/releases/download/v7.9/MapleMono-NF.zip",
+		"59098b87c895d871635d37680e88000ae2b2b25b55428195b228ec589e35fb89",
+		"resources/fonts/maple-mono-nf/LICENSE.txt",
+		"https://github.com/ryanoasis/nerd-fonts/blob/master/license-audit.md",
+		"SIL OPEN FONT LICENSE Version 1.1",
+	} {
+		if !strings.Contains(string(notices), want) {
+			t.Errorf("%s does not contain %q", ThirdPartyNoticesFile, want)
 		}
 	}
 }

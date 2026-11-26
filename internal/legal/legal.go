@@ -106,6 +106,7 @@ func licenseChecks() []documentCheck {
 		{filepath.Join("resources", ThirdPartyNoticesFile), []string{
 			"MyGo", "libghostty-vt", "EternalTerminal", "Netcatty",
 			"mosh-go", "0284bd652aab3dfff5b0b74945c23901d7537b61",
+			"Maple Mono NF", "SIL OPEN FONT LICENSE Version 1.1",
 		}},
 	}
 }
