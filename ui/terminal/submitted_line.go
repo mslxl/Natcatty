@@ -100,7 +100,9 @@ func readLogicalLine(term *vt.Terminal) (logicalLine, bool) {
 // out to the width with blanks; those are dropped, except on the cursor's row
 // where blanks up to the cursor are real input (spaces typed there). A
 // soft-wrapped row keeps its full width because its text continues onto the
-// next row.
+// next row. keep counts runes, never cells: cx is a cell column, and a wide
+// character before the cursor takes two cells for one rune, so the trimming
+// must compare rune positions through the column table, not cx itself.
 func logicalRowText(text []rune, cols []int, wrap bool, isCursorRow bool, cx int) string {
 	if len(text) == 0 {
 		return ""
@@ -109,7 +111,7 @@ func logicalRowText(text []rune, cols []int, wrap bool, isCursorRow bool, cx int
 	if !wrap {
 		keep := 0
 		if isCursorRow {
-			keep = cx
+			keep = cursorCharsBefore(text, cols, cx)
 		}
 		for end > keep && text[end-1] == ' ' {
 			end--

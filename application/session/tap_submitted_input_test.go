@@ -11,6 +11,7 @@ package session
 // returns it.
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -53,8 +54,8 @@ func TestTapRecallRecordsTheRenderedLine(t *testing.T) {
 	if _, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(time.Second)); !started {
 		t.Fatal("the seed command did not start a capture")
 	}
-	if !tap.promptPrefixSet || tap.promptPrefix != "% " {
-		t.Fatalf("prompt prefix = %q (set %v), want %% ", tap.promptPrefix, tap.promptPrefixSet)
+	if tap.promptPrefix != "% " {
+		t.Fatalf("prompt prefix = %q, want %% ", tap.promptPrefix)
 	}
 
 	// Up recall: the line editor swaps the buffer invisibly. The mirror sees
@@ -71,24 +72,24 @@ func TestTapRecallRecordsTheRenderedLine(t *testing.T) {
 	}
 }
 
-func TestTapCtrlRRecordsTheRenderedLine(t *testing.T) {
+func TestTapCtrlRDegradesToTheDiscard(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	screen := &screenReader{prompt: "% ", ok: true}
 	tap.setSubmittedInputReader(screen.line())
 	typeIn(tap, screen, "echo seed", tapAt(0))
 	tap.handleInput([]byte("\r"), tapAt(time.Second))
 
-	// Ctrl+R: the reverse search rewrites the buffer from history. The mirror
-	// is lost; the screen shows the found command.
+	// Ctrl+R: at the Enter keystroke the screen still shows the reverse-search
+	// mini-buffer, not the accepted command — that is painted only after Enter
+	// reaches the shell, which is after the tap reads. The mini-buffer does not
+	// start with the prompt chrome, so the strip fails and the discard stands:
+	// reverse search cannot be captured at Enter.
 	screen.input = ""
+	screen.prompt = "bck-i-search: status_"
 	tap.handleInput([]byte("\x12"), tapAt(2*time.Second))
-	screen.input = "echo reverse-found"
 	_, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(3*time.Second))
-	if !started {
-		t.Fatal("a Ctrl+R line with a live reader did not start a capture")
-	}
-	if got := tap.state(tapAt(3 * time.Second)).Command.Text; got != "echo reverse-found" {
-		t.Fatalf("command = %q", got)
+	if started {
+		t.Fatal("a Ctrl+R mini-buffer line started a capture")
 	}
 }
 
@@ -170,5 +171,199 @@ func TestTapBarePromptKeepsTheDiscard(t *testing.T) {
 	_, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(3*time.Second))
 	if started {
 		t.Fatal("a bare-prompt rendered line started a capture")
+	}
+}
+
+func TestTapCompletionGrowthRecordsTheRenderedLine(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	screen := &screenReader{prompt: "% ", ok: true}
+	tap.setSubmittedInputReader(screen.line())
+	typeIn(tap, screen, "echo seed", tapAt(0))
+	tap.handleInput([]byte("\r"), tapAt(time.Second))
+
+	// Tab completion: the user types "git st" and presses Tab; the line editor
+	// grows the line to "git status" invisibly — the Tab byte is neither
+	// mirrored nor invalidating, so the mirror still holds "git st", a strict
+	// prefix fragment of the rendered line. The rendered truth wins.
+	screen.input = ""
+	typeIn(tap, screen, "git st", tapAt(2*time.Second))
+	tap.handleInput([]byte("\t"), tapAt(3*time.Second))
+	screen.input = "git status" // the completion repaints the line
+	_, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(4*time.Second))
+	if !started {
+		t.Fatal("a completed line did not start a capture")
+	}
+	if got := tap.state(tapAt(4 * time.Second)).Command.Text; got != "git status" {
+		t.Fatalf("command = %q, want the completed line the editor shows", got)
+	}
+}
+
+func TestTapEraseEchoInFlightKeepsTheMirror(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	screen := &screenReader{prompt: "% ", ok: true}
+	tap.setSubmittedInputReader(screen.line())
+	// Type "gits", erase the s, and press Enter fast on a slow link: the erase
+	// echo is still in flight, so the screen still shows the pre-erasure line.
+	// That is the mirror plus a suffix — the exact shape completion growth
+	// has — but no Tab was pressed, so the gate keeps the mirror: "git" is
+	// what runs, not the stale "gits".
+	screen.input = ""
+	typeIn(tap, screen, "gits", tapAt(0))
+	tap.handleInput([]byte{0x7f}, tapAt(time.Second))
+	screen.input = "gits" // erase echo has not landed yet
+	_, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(2*time.Second))
+	if !started {
+		t.Fatal("an erased line did not start a capture")
+	}
+	if got := tap.state(tapAt(2 * time.Second)).Command.Text; got != "git" {
+		t.Fatalf("command = %q, want the erased mirror, not the stale echo", got)
+	}
+}
+
+func TestTapEchoLagKeepsTheMirrorAgainstTheFragmentRule(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	screen := &screenReader{prompt: "% ", ok: true}
+	tap.setSubmittedInputReader(screen.line())
+	// Genuine echo lag: the screen trails the mirror, so the rendered input is
+	// a fragment of the mirror — not the other way round — and the mirror wins.
+	typeIn(tap, screen, "echo seed", tapAt(0))
+	screen.input = "echo" // only part of the echo has landed
+	_, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(time.Second))
+	if !started {
+		t.Fatal("plain typing did not start a capture")
+	}
+	if got := tap.state(tapAt(time.Second)).Command.Text; got != "echo seed" {
+		t.Fatalf("command = %q, want the typed buffer (echo lag)", got)
+	}
+}
+
+func TestTapErasedAndRetypedLineDoesNotCaptureResidueAsChrome(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	screen := &screenReader{prompt: "% ", ok: true}
+	tap.setSubmittedInputReader(screen.line())
+	typeIn(tap, screen, "echo seed", tapAt(0))
+	tap.handleInput([]byte("\r"), tapAt(time.Second))
+
+	// Type "git", erase it back to empty, then retype. On a slow link the erase
+	// echo is still in flight when the mirror empties, so the screen can show
+	// the half-erased line. The line is no longer pristine, so no new capture
+	// happens: the first capture ("% ") from the seed line stands, and the
+	// residue "% g" never becomes chrome.
+	screen.input = ""
+	for _, r := range "git" {
+		tap.handleInput([]byte(string(r)), tapAt(2*time.Second))
+		screen.input += string(r)
+	}
+	for i := 0; i < len("git"); i++ {
+		tap.handleInput([]byte{0x7f}, tapAt(3*time.Second))
+	}
+	screen.input = "g" // erase echo still in flight: a half-erased line
+	if tap.promptPrefix != "% " {
+		t.Fatalf("prompt prefix = %q after erasing, want the original %% ", tap.promptPrefix)
+	}
+	tap.handleInput([]byte("x"), tapAt(4*time.Second))
+	if tap.promptPrefix != "% " {
+		t.Fatalf("prompt prefix = %q after retyping, want the original %% ", tap.promptPrefix)
+	}
+}
+
+func TestTapDeliveredCopyNeverConsultsTheScreen(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	screen := &screenReader{prompt: "% ", ok: true}
+	tap.setSubmittedInputReader(screen.line())
+	typeIn(tap, screen, "echo seed", tapAt(0))
+	tap.handleInput([]byte("\r"), tapAt(time.Second))
+
+	// A broadcast-delivered copy on a target session: its keystroke timing is
+	// not the user's, so the reader stays out of its path entirely — no prompt
+	// capture at its first byte, no arbitration at its Enter. The mirror still
+	// captures the copy itself, as before the fallback existed.
+	screen.input = "unrelated target line"
+	if _, _, started, _, _ := tap.handleInputProvenance([]byte("uptime\r"), tapAt(2*time.Second), false); !started {
+		t.Fatal("a delivered copy did not start a capture")
+	}
+	if got := tap.state(tapAt(2 * time.Second)).Command.Text; got != "uptime" {
+		t.Fatalf("command = %q, want the delivered copy verbatim", got)
+	}
+}
+
+func TestTapDeliveredCopyKeepsTheRecallDiscard(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	screen := &screenReader{prompt: "% ", ok: true}
+	tap.setSubmittedInputReader(screen.line())
+	typeIn(tap, screen, "echo seed", tapAt(0))
+	tap.handleInput([]byte("\r"), tapAt(time.Second))
+
+	// The user recalls on the target (mirror lost), then a broadcast copy's
+	// Enter arrives. The screen could prove the line — but the copy is not the
+	// user's keystrokes, so the discard stands rather than read a moment that
+	// has nothing to do with the delivery.
+	screen.input = ""
+	tap.handleInput([]byte("\x1b[A"), tapAt(2*time.Second))
+	screen.input = "git status"
+	_, _, started, _, _ := tap.handleInputProvenance([]byte("\r"), tapAt(3*time.Second), false)
+	if started {
+		t.Fatal("a delivered Enter over a recalled line consulted the screen")
+	}
+}
+
+func TestSessionSubmittedInputReaderReachesTheTap(t *testing.T) {
+	factory := &fakeFactory{transport: newFakeTransport()}
+	service := newTestService(factory, WithClipboardPolicy(func() domainterminal.ClipboardAccess {
+		return domainterminal.ClipboardWriteOnly
+	}))
+	session, err := service.Open(context.Background(), StartSpec{Kind: KindLocal, Label: "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	// The reader the surface registers is the one the tap invokes: a recall
+	// typed on the session captures the line the reader proves. The model
+	// echoes as the shell does, one byte at a time, so the first keystroke's
+	// prompt capture sees the bare prompt.
+	screen := &screenReader{prompt: "% ", ok: true}
+	session.SetSubmittedInputReader(screen.line())
+	writeEchoing := func(text string) {
+		t.Helper()
+		for _, r := range text {
+			if _, err := session.TerminalConn().Write([]byte(string(r))); err != nil {
+				t.Fatal(err)
+			}
+			screen.input += string(r)
+		}
+	}
+	writeEchoing("echo seed")
+	if _, err := session.TerminalConn().Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	screen.input = ""
+	if _, err := session.TerminalConn().Write([]byte("\x1b[A")); err != nil {
+		t.Fatal(err)
+	}
+	screen.input = "git status"
+	if _, err := session.TerminalConn().Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the recalled capture starts", func() bool {
+		return session.Snapshot().Command.Text == "git status"
+	})
+
+	// Detachment clears the reader: a later recall degrades to the discard
+	// instead of reading a screen the user is no longer typing on.
+	session.SetSubmittedInputReader(nil)
+	if _, err := session.TerminalConn().Write([]byte("\x1b[A")); err != nil {
+		t.Fatal(err)
+	}
+	before := session.Snapshot().Command.Text
+	if _, err := session.TerminalConn().Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if got := session.Snapshot().Command.Text; got != before && got != "" {
+			t.Fatalf("a recall with no reader captured %q", got)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

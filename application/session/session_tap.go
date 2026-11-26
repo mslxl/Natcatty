@@ -74,7 +74,11 @@ func (s *Session) AcknowledgeActivity() {
 // input.
 func (s *Session) handleInput(data []byte, source, translate bool) (forwarded []byte, changed bool, gated bool) {
 	now := time.Now()
-	forwarded, changed, started, completions, transfer := s.tap.handleInput(data, now)
+	// The tap's screen reconciliation answers only for keystrokes typed in
+	// this Session's own terminal: a delivered copy — broadcast, compose,
+	// insert, startup — has no screen moment of its own, so the reader and
+	// the prompt capture stay out of its path.
+	forwarded, changed, started, completions, transfer := s.tap.handleInputProvenance(data, now, source)
 	// The tap returns no bytes only while a transfer consumes normal input.
 	// A Ctrl+C abort returns the five CAN bytes, so it is not gated.
 	gated = len(data) > 0 && len(forwarded) == 0

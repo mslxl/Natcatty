@@ -3,7 +3,7 @@ package terminal
 // Tests for Terminal.SubmittedLine, the accessor the capture fallback uses to
 // read the line the shell actually shows at Enter. The line is assembled from
 // ghostty's semantic rows: the cursor's prompt row and its continuation rows,
-  // with no prompt/input split — that reconciliation is the tap's, which knows
+// with no prompt/input split — that reconciliation is the tap's, which knows
 // the typed buffer.
 
 import (
@@ -56,9 +56,9 @@ func TestSubmittedLineWrappedInput(t *testing.T) {
 	if !strings.Contains(line, "echo averylongcommandthatwraps") {
 		t.Errorf("wrapped line %q does not reassemble the whole input", line)
 	}
-	if strings.Contains(line, "\n") && strings.Count(line, "\n") > 0 {
+	if strings.Contains(line, "\n") {
 		// A soft wrap joins without a newline; only a hard line break keeps one.
-		t.Logf("line %q joined soft wrap", line)
+		t.Errorf("soft-wrapped line %q carries a newline", line)
 	}
 }
 
@@ -100,5 +100,39 @@ func TestSubmittedLineEmptyInput(t *testing.T) {
 	}
 	if strings.TrimSpace(line) != strings.TrimSpace("user@host:~$") {
 		t.Errorf("empty-input line = %q, want just the prompt", line)
+	}
+}
+
+func TestSubmittedLineAltScreen(t *testing.T) {
+	term := submittedLineHarness(t, 80, 24)
+	term.Feed([]byte("\x1b]133;A\a$ echo hello"))
+	// A full-screen program takes the alternate screen: there is no trustworthy
+	// input line while it owns the display.
+	term.Feed([]byte("\x1b[?1049h"))
+
+	if _, _, ok := term.SubmittedLine(); ok {
+		t.Error("a submitted line was reported while the alt screen is active")
+	}
+}
+
+func TestSubmittedLineWideCharCursorRow(t *testing.T) {
+	term := submittedLineHarness(t, 80, 24)
+	// A wide character before the cursor occupies two cells for one rune. The
+	// padding trim must measure runes through the column table, not the cursor's
+	// cell column: counting cells as runes keeps padding blanks that no one typed.
+	term.Feed([]byte("\x1b]133;A\a$ echo 世界"))
+
+	line, cursor, ok := term.SubmittedLine()
+	if !ok {
+		t.Fatal("no submitted line on a wide-char prompt")
+	}
+	if got := strings.TrimRight(line, " "); got != "$ echo 世界" {
+		t.Errorf("line %q, want exactly the prompt and input with no padding", got)
+	}
+	if line != "$ echo 世界" {
+		t.Errorf("line %q keeps padding blanks beyond the input", line)
+	}
+	if cursor != len([]rune("$ echo 世界")) {
+		t.Errorf("cursor offset = %d, want the rune length of the input", cursor)
 	}
 }

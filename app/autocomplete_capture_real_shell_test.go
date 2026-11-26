@@ -408,7 +408,28 @@ func TestTabAcceptsACapturedCommandInARealBash(t *testing.T) {
 // recalled command reaches the journal a second time — correct, not dropped,
 // not a hybrid.
 func TestRecallRecordsTheRenderedCommand(t *testing.T) {
-	shell := openCaptureShell(t, 0)
+	testRecallRecordsTheRenderedCommand(t, openCaptureShell(t, 0))
+}
+
+// TestRecallRecordsTheRenderedCommandInBash runs the recall flow against bash,
+// whose readline repaints the recalled line just as zsh's zle does. The capture
+// fallback must read the rendered line in either shell.
+//
+// It is skipped: a real bash session's prompt rows are not marked with the OSC
+// 133 prompt semantics ghostty exposes, so there is no trustworthy line to read
+// (Terminal.SubmittedLine reports not-ok). zsh rows are marked; bash's are not,
+// even though the integration emits the same A/B marks in both. That marking
+// gap is independent of the recall fallback — it decides whether any screen
+// read is possible at all — so it is tracked separately (ticket 04), and the
+// recall capture in bash degrades to the safe discard exactly as it did before
+// this feature. The skip lifts when the marking gap closes.
+func TestRecallRecordsTheRenderedCommandInBash(t *testing.T) {
+	t.Skip("bash prompt rows are not OSC 133-marked, so no trustworthy line exists to read; the recall degrades to the discard")
+	testRecallRecordsTheRenderedCommand(t, openCaptureShellNamed(t, "bash", 0))
+}
+
+func testRecallRecordsTheRenderedCommand(t *testing.T, shell *captureShell) {
+	t.Helper()
 	shell.runCaptureCommand(t) // first execution: journal count 1
 
 	if got := shell.journal.countCommand(captureCommand); got != 1 {
@@ -416,8 +437,9 @@ func TestRecallRecordsTheRenderedCommand(t *testing.T) {
 			got, captureCommand, shell.journal.commands())
 	}
 
-	// Press Up once: zsh recalls the last command onto the line. The keystroke
-	// mirror sees only the arrow; the line editor swaps the buffer invisibly.
+	// Press Up once: the shell recalls the last command onto the line. The
+	// keystroke mirror sees only the arrow; the line editor swaps the buffer
+	// invisibly.
 	shell.tester.Key(0, ui.KeyUp)
 	pumpTUIFrames(shell.tester, 300*time.Millisecond)
 	// Run the recalled line. If the fallback reads the screen, this records the
@@ -435,38 +457,6 @@ func TestRecallRecordsTheRenderedCommand(t *testing.T) {
 		if strings.ContainsRune(command, '\x1b') || strings.ContainsRune(command, '\x03') {
 			t.Fatalf("the journal holds a garbled row %q: %v", command, shell.journal.commands())
 		}
-	}
-}
-
-// TestRecallRecordsTheRenderedCommandInBash runs the recall flow against bash,
-// whose readline repaints the recalled line just as zsh's zle does. The capture
-// fallback must read the rendered line in either shell.
-//
-// It is skipped: a real bash session's prompt rows are not marked with the OSC
-// 133 prompt semantics ghostty exposes, so there is no trustworthy line to read
-// (Terminal.SubmittedLine reports not-ok). zsh rows are marked; bash's are not,
-// even though the integration emits the same A/B marks in both. That marking
-// gap is independent of the recall fallback — it decides whether any screen
-// read is possible at all — so it is tracked separately, and the recall capture
-// in bash degrades to the safe discard exactly as it did before this feature.
-func TestRecallRecordsTheRenderedCommandInBash(t *testing.T) {
-	t.Skip("bash prompt rows are not OSC 133-marked, so no trustworthy line exists to read; the recall degrades to the discard")
-	shell := openCaptureShellNamed(t, "bash", 0)
-	shell.runCaptureCommand(t)
-
-	if got := shell.journal.countCommand(captureCommand); got != 1 {
-		t.Fatalf("after the first run the journal holds %d rows of %q, want 1: %v",
-			got, captureCommand, shell.journal.commands())
-	}
-
-	shell.tester.Key(0, ui.KeyUp)
-	pumpTUIFrames(shell.tester, 300*time.Millisecond)
-	shell.tester.Key(0, ui.KeyEnter)
-	if !realShellWait(t, func() bool {
-		return shell.journal.countCommand(captureCommand) >= 2
-	}) {
-		t.Fatalf("the recalled execution never reached the journal in bash: count %d, commands %v, screen %q",
-			shell.journal.countCommand(captureCommand), shell.journal.commands(), shell.surface.ScreenText())
 	}
 }
 

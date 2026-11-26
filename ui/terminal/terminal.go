@@ -522,6 +522,11 @@ type Terminal struct {
 	quoting quoting
 
 	// mu guards the emulator, which the reader changes and frames read.
+	// Lock order: callers outside this package may hold their own lock while
+	// reading the screen through SubmittedLine — the capture tap does, on the
+	// input path — so nothing under mu may call back into the conn, the input
+	// queue's consumer, or any session-level code synchronously. Replies and
+	// writes only push to the async queue; callbacks fire after unlocking.
 	mu      sync.Mutex
 	term    *vt.Terminal
 	size    gridSize
