@@ -6,9 +6,10 @@ before the first phone milestone. The Android artifact is one universal APK
 attached to a GitHub release, signed with a project-owned keystore supplied only
 from repository secrets. It is installed from the file, not from a store, and a
 newer release installs over the old one because `versionCode` increases
-monotonically. The iOS artifact is the simulator app uploaded by CI; a device
-package is produced only when a paid Apple developer account exists. There is no
-Play Console, no App Store, no Play App Signing, and no TestFlight.
+monotonically. The iOS artifact is an unsigned device package attached to each
+release (ADR-0027); no simulator app or signed device package is produced by
+CI. There is no Play Console, no App Store, no Play App Signing, and no
+TestFlight.
 
 **Status**: accepted
 
@@ -33,17 +34,17 @@ Play Console, no App Store, no Play App Signing, and no TestFlight.
   rollback or staged rollout.
 - Signing material never enters the checkout. The release job decodes
   `ANDROID_KEYSTORE_BASE64` into `$RUNNER_TEMP`; `ANDROID_KEYSTORE_PASSWORD`,
-  `ANDROID_KEY_ALIAS` (and optionally `ANDROID_KEY_PASSWORD`) and the
-  `ANDROID_SIGNING_CERT_SHA256` variable are required, and the job fails closed
-  when one is missing.
+  `ANDROID_KEY_ALIAS` (and optionally `ANDROID_KEY_PASSWORD`) are required, and
+  the job fails closed when one is missing.
 - The keystore is generated once and backed up outside the repository. Android
   identifies an installed app by its applicationId plus its signing key, so
   losing the key makes a newly signed APK uninstallable over the old one; the
   loss is unrecoverable.
-- The release job verifies the APK's signature and expected certificate, its
-  computed `versionCode`, every ABI in `scripts/mobile/android-abis.txt`, and
-  16 KB `LOAD` alignment before publishing.
-- iOS device signing additionally needs `APPLE_DEVELOPMENT_TEAM`,
+- The release job verifies the APK's computed `versionCode`, every ABI in
+  `scripts/mobile/android-abis.txt`, and 16 KB `LOAD` alignment before
+  publishing.
+- iOS device signing is not produced by CI. The unsigned package attached to
+  every release is a re-signing input, not an installable app; ADR-0027 covers
+  it. A signed package would need a paid Apple developer account plus
   `APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD` and
-  `APPLE_PROVISIONING_PROFILE`; until the variable exists the device-package
-  job is skipped, so CI never publishes an unsigned package.
+  `APPLE_PROVISIONING_PROFILE` in a job of its own.

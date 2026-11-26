@@ -1,0 +1,79 @@
+diff --git a/cmd/mygo/build.go b/cmd/mygo/build.go
+index 5d9e3a80..4f502265 100644
+--- a/cmd/mygo/build.go
++++ b/cmd/mygo/build.go
+@@ -17,6 +17,7 @@ import (
+ type buildOptions struct {
+ 	debug         bool
+ 	sign          string // macOS signing identity
++	unsigned      bool   // iOS device package leaves signing to a sideloading tool
+ 	skipDMG       bool
+ 	skipNotarize  bool
+ 	skipInstaller bool              // no Windows installer, nor NSIS for it
+@@ -69,6 +70,7 @@ WebAssembly, named by its content: a static site, to serve from anywhere.`)
+ 	skipNotarize := flags.Bool("skip-notarize", false, "do not notarize even when macos.notarize is set")
+ 	skipInstaller := flags.Bool("skip-installer", false, "do not create the Windows installer (<slug>-setup-<version>-<arch>.exe), nor download NSIS for it")
+ 	sign := flags.String("sign", "", `macOS signing identity (default: macos.signingIdentity, or "-" for ad hoc)`)
++	unsigned := flags.Bool("unsigned", false, "build the iOS device app without a signing identity or provisioning profile, leaving the .ipa unsigned for a sideloading tool to sign")
+ 	out := flags.String("o", "", "output directory (default: out from mygo.json or dist)")
+ 	upload := flags.Bool("upload", false, "upload the installers and updates to the GitHub release of this version (updates.github), as a draft, or to the bucket of updates.s3")
+ 	if err := flags.Parse(args); err != nil {
+@@ -94,10 +96,13 @@ WebAssembly, named by its content: a static site, to serve from anywhere.`)
+ 			return err
+ 		}
+ 	}
+-	opts := buildOptions{debug: *debug, sign: c.MacOS.SigningIdentity, skipDMG: *skipDMG, skipNotarize: *skipNotarize, skipInstaller: *skipInstaller}
++	opts := buildOptions{debug: *debug, sign: c.MacOS.SigningIdentity, unsigned: *unsigned, skipDMG: *skipDMG, skipNotarize: *skipNotarize, skipInstaller: *skipInstaller}
+ 	if *sign != "" {
+ 		opts.sign = *sign
+ 	}
++	if *unsigned && !slices.ContainsFunc(targets, func(p string) bool { return p == "ios" || p == "ios/arm64" }) {
++		return fmt.Errorf("-unsigned leaves signing to a sideloading tool, and only the iOS device app supports it (ios or ios/arm64)")
++	}
+ 	if c.MacOS.Notarize != nil && !opts.skipNotarize && opts.sign == "-" {
+ 		return fmt.Errorf("notarization needs a Developer ID signing identity: set macos.signingIdentity or pass -sign")
+ 	}
+diff --git a/cmd/mygo/ios.go b/cmd/mygo/ios.go
+index eb5c396f..5b857727 100644
+--- a/cmd/mygo/ios.go
++++ b/cmd/mygo/ios.go
+@@ -578,14 +578,19 @@ func checkPrivateAPIs(bin string) error {
+ }
+ 
+ // buildIOS builds the app for iOS: a signed .ipa for devices (and the App
+-// Store), or with simulator an .app for the simulator.
++// Store), an unsigned .ipa with unsigned, or with simulator an .app for the
++// simulator.
+ func buildIOS(c *Config, opts buildOptions, simulator bool) ([]string, error) {
+ 	t, err := newIOSToolchain(c, simulator)
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if simulator && opts.unsigned {
++		return nil, fmt.Errorf("-unsigned leaves the device app for a sideloading tool to sign, and the simulator app is always signed ad hoc")
++	}
++	unsigned := !simulator && opts.unsigned
+ 	var prof *profile
+-	if !simulator {
++	if !simulator && !unsigned {
+ 		// Before building: no point building for a profile that isn't there.
+ 		if prof, err = pickProfile(c, c.IOS.Distribution, ""); err != nil {
+ 			return nil, err
+@@ -612,10 +617,14 @@ func buildIOS(c *Config, opts buildOptions, simulator bool) ([]string, error) {
+ 		err = checkPrivateAPIs(filepath.Join(bundle, c.executableName()))
+ 	}
+ 	if err == nil {
+-		tk.set("signing")
+-		if simulator {
++		// An unsigned device app carries no entitlements either: they come
++		// from the profile the sideloading tool signs the package with.
++		switch {
++		case simulator:
++			tk.set("signing")
+ 			err = signForSimulator(bundle)
+-		} else {
++		case !unsigned:
++			tk.set("signing")
+ 			err = prof.sign(opts.work, bundle, c)
+ 		}
+ 	}

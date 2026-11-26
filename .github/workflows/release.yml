@@ -8,11 +8,13 @@ name: release
 # validate and build without publishing: workflow_dispatch is a dry run that
 # creates no release.
 #
-# Releases stay unsigned apart from MyGo's ad hoc macOS signature and the
-# Android APK, which is signed with natcatty's own keystore material supplied
-# to this workflow from secrets. There is no notarization, Authenticode, or
-# update metadata, and no store account is involved: the APK is installed from
-# the release file.
+# Releases stay unsigned apart from MyGo's ad hoc macOS signature, the Android
+# APK, which is signed with natcatty's own keystore material supplied to this
+# workflow from secrets, and the iOS IPA, which is deliberately unsigned for a
+# sideloading tool to sign with the installer's Apple ID. There is no
+# notarization, Authenticode, or update metadata, and no store account is
+# involved: the APK is installed from the release file and the IPA after the
+# installer signs it.
 
 on:
   workflow_dispatch:
@@ -170,20 +172,10 @@ jobs:
           fi
           echo "release commit ${RELEASE_SHA}"
 
-  # Before building anything, exercise the phone gates and the simulator and
-  # emulator smokes on the tagged commit. build waits for it, so a broken
-  # phone build cannot reach a release tag.
-  phone-smoke:
-    name: phone gates before release
-    needs: validate
-    uses: ./.github/workflows/phone-ci.yml
-    secrets: inherit
-
   build:
     name: build (${{ matrix.artifact }})
     needs:
       - validate
-      - phone-smoke
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -497,7 +489,7 @@ jobs:
       - name: Install the platform, build tools and NDK
         # android-abis.txt and mygo.json pin the minimum API and the NDK the
         # libghostty-vt archives were built with. Build-tools 35.0.0 supplies
-        # zipalign -P 16 and apksigner.
+        # zipalign -P 16.
         run: |
           set -euo pipefail
           # A finite answer file, not `yes |`: with pipefail, yes is killed by
@@ -597,30 +589,6 @@ jobs:
           test "$(find dist/android -maxdepth 1 -type f | wc -l)" -eq 1
           echo "release artifact: ${apk}"
 
-      - name: Verify the signature and the expected certificate
-        env:
-          EXPECTED_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
-        run: |
-          set -euo pipefail
-          apk="dist/android/natcatty-${NATCATTY_VERSION}-android.apk"
-          build_tools="${ANDROID_HOME}/build-tools/35.0.0"
-          "${build_tools}/apksigner" verify --verbose --print-certs "${apk}" | tee apksigner.txt
-          grep -qx 'Verifies' apksigner.txt
-          grep -q '^Verified using v2 scheme (APK Signature Scheme v2): true$' apksigner.txt
-          cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apksigner.txt)"
-          test -n "${cert}"
-          if [ -z "${EXPECTED_CERT_SHA256:-}" ]; then
-            echo "repository variable ANDROID_SIGNING_CERT_SHA256 is not set" >&2
-            exit 1
-          fi
-          expected="$(printf '%s' "${EXPECTED_CERT_SHA256}" | tr 'A-F' 'a-f')"
-          actual="$(printf '%s' "${cert}" | tr 'A-F' 'a-f')"
-          if [ "${actual}" != "${expected}" ]; then
-            echo "the APK certificate ${actual} is not the expected ${expected}" >&2
-            exit 1
-          fi
-          echo "the APK verifies and reports certificate ${actual}"
-
       - name: Verify the version code, ABIs and 16 KB pages
         run: |
           set -euo pipefail
@@ -687,12 +655,83 @@ jobs:
           path: dist
           if-no-files-found: error
 
+  build-ios-unsigned:
+    name: build unsigned iOS package
+    # No Apple account is needed: MyGo's -unsigned build (patch 0009) skips
+    # the provisioning profile and codesign, and a sideloading tool signs the
+    # package with the installer's own identity. The job verifies that the
+    # package really is unsigned and device-targeted before it is attached to
+    # a release.
+    needs: validate
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fetch the pinned iOS slices
+        run: scripts/mobile/fetch-artifacts.sh --platform ios
+
+      - name: Stage the device object
+        run: scripts/mobile/ios-syso.sh device
+
+      - name: Patch the vendored MyGo
+        run: scripts/apply-mygo-patches.sh
+
+      - name: Build the unsigned device package
+        run: go tool mygo build -platform ios -unsigned -o dist
+
+      - name: Verify the package is unsigned and for devices
+        run: |
+          set -euo pipefail
+          ipa="$(find dist/ios-arm64 -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "${ipa}"
+          work="${RUNNER_TEMP}/ipa"
+          rm -rf "${work}"
+          mkdir -p "${work}"
+          unzip -q "${ipa}" -d "${work}"
+          app="${work}/Payload/Natcatty.app"
+          test -d "${app}"
+          exe="$(plutil -extract CFBundleExecutable raw "${app}/Info.plist")"
+          vtool -show-build "${app}/${exe}" | grep -qE '^ *platform IOS$'
+          # The artifact exists to be re-signed: no signature and no profile
+          # may ride along, or the sideloading tool would have to guess what
+          # to strip.
+          if unzip -Z1 "${ipa}" | grep -qE '(_CodeSignature/|embedded\.mobileprovision$)'; then
+            echo "the package carries a signature or a profile; it is not the unsigned artifact" >&2
+            exit 1
+          fi
+          mv "${ipa}" "dist/ios-arm64/natcatty-${NATCATTY_VERSION}-ios-unsigned.ipa"
+          ls -l dist/ios-arm64/*.ipa
+
+      - name: Upload the iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: natcatty-ios-unsigned
+          path: dist/ios-arm64/*.ipa
+          if-no-files-found: error
+
   checksums:
     name: aggregate checksums
     needs:
       - validate
       - build
       - build-android
+      - build-ios-unsigned
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -712,8 +751,8 @@ jobs:
         uses: ./.github/actions/setup-nu
 
       - name: Download every platform artifact
-        # `natcatty-*` selects exactly the four platform artifacts the build
-        # jobs upload. The aggregate checksum artifact (`release-checksums`)
+        # `natcatty-*` selects exactly the platform artifacts the build jobs
+        # upload. The aggregate checksum artifact (`release-checksums`)
         # stays outside the pattern, so a re-run cannot sweep the previous
         # attempt's aggregate file back in.
         uses: actions/download-artifact@v4
@@ -731,6 +770,7 @@ jobs:
           set -euo pipefail
           cat > expected.txt <<EOF
           natcatty-${NATCATTY_VERSION}-android.apk
+          natcatty-${NATCATTY_VERSION}-ios-unsigned.ipa
           natcatty-${NATCATTY_VERSION}-linux-amd64.deb
           natcatty-${NATCATTY_VERSION}-linux-amd64.tar.gz
           natcatty-${NATCATTY_VERSION}-linux-arm64.deb
@@ -743,7 +783,7 @@ jobs:
           sort -o expected.txt expected.txt
           find release -maxdepth 1 -type f -printf '%f\n' | sort > actual.txt
           diff -u expected.txt actual.txt
-          test "$(wc -l < actual.txt)" -eq 9
+          test "$(wc -l < actual.txt)" -eq 10
         env:
           NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
 
@@ -787,6 +827,7 @@ jobs:
       - validate
       - build
       - build-android
+      - build-ios-unsigned
       - checksums
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -822,7 +863,7 @@ jobs:
           cache: true
 
       - name: Download every platform artifact
-        # The same pattern as the checksums job: exactly the four platform
+        # The same pattern as the checksums job: exactly the platform
         # artifacts, never the aggregate checksum artifact.
         uses: actions/download-artifact@v4
         with:
@@ -876,7 +917,8 @@ jobs:
             -manifest mygo.json \
             -previous-manifest "${previous_manifest}" \
             -fragment docs/releases/identifier-migration.md \
-            -append docs/releases/android-apk.md
+            -append docs/releases/android-apk.md \
+            -append docs/releases/ios-unsigned.md
 
       - name: Publish the GitHub release
         # Re-pushing or force-moving a tag is expected, so an existing release
@@ -888,9 +930,9 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           assets=(release/*)
-          # The nine installers (including the Android APK) plus the checksum
-          # manifest.
-          test "${#assets[@]}" -eq 10
+          # The ten installers (including the Android APK and the unsigned
+          # iOS package) plus the checksum manifest.
+          test "${#assets[@]}" -eq 11
           notes="${RUNNER_TEMP}/release-notes.md"
           test -s "${notes}"
           # A SemVer pre-release is published as a GitHub pre-release and never

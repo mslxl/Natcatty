@@ -24,6 +24,7 @@ keeps the SemVer form.
 | Linux amd64 | `natcatty-0.1.0-linux-amd64.tar.gz`, `natcatty-0.1.0-linux-amd64.deb` | The tarball holds the executable and resources. MyGo's standalone `install.sh` is removed and not published. |
 | Linux arm64 | `natcatty-0.1.0-linux-arm64.tar.gz`, `natcatty-0.1.0-linux-arm64.deb` | Same shape. |
 | Android (universal) | `natcatty-0.1.0-android.apk` | One APK with the `arm64-v8a`, `armeabi-v7a` and `x86_64` libraries, all 16 KB page compatible. Signed with the project's release keystore. Installed from the file, not a store. See [android-release.md](android-release.md). |
+| iOS arm64 (unsigned) | `natcatty-0.1.0-ios-unsigned.ipa` | Device build with no signature and no provisioning profile. A sideloading tool signs it with the installer's Apple ID before installing. See [ios-unsigned.md](releases/ios-unsigned.md). |
 
 Every desktop artifact copies the `resources/` tree next to the executable
 (inside `Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
@@ -102,18 +103,25 @@ commit of the pushed tag or the dispatched ref, and `validate` asserts that
    `scripts/mobile/android-libs.sh`, decodes the release keystore from
    secrets into `$RUNNER_TEMP`, writes the computed version code into the
    disposable manifest, and builds the universal APK. It deletes the `.aab`,
-   then verifies the signature and expected certificate with
-   `apksigner verify --print-certs`, the version code with
-   `apkanalyzer manifest version-code`, and every ABI's 16 KB `LOAD`
-   alignment with `zipalign -c -P 16` and `llvm-readelf`.
+   then verifies the version code with `apkanalyzer manifest version-code`
+   and every ABI's 16 KB `LOAD` alignment with `zipalign -c -P 16` and
+   `llvm-readelf`.
+
+   A **build-ios-unsigned** job fetches and stages the iOS device slices, then
+   builds the device app with `go tool mygo build -platform ios -unsigned`
+   (patch 0009). It needs no Apple account: the package carries no signature
+   and no provisioning profile, so a sideloading tool signs it later. The job
+   verifies that the executable is device-targeted (`vtool -show-build`
+   reports `platform IOS`) and that the archive holds neither a
+   `_CodeSignature` directory nor an `embedded.mobileprovision`.
 3. **checksums** downloads the platform artifacts, flattens the release set
-   with `nu scripts/release.nu collect`, asserts the exact nine-file set, and
+   with `nu scripts/release.nu collect`, asserts the exact ten-file set, and
    generates one aggregate checksum manifest with relative names. Both the
    platform artifacts and the aggregate manifest are uploaded as workflow
-   artifacts. It depends on `build` and `build-android`, so a failed build
-   prevents the release set from being assembled.
+   artifacts. It depends on `build`, `build-android` and `build-ios-unsigned`,
+   so a failed build prevents the release set from being assembled.
 4. **publish** runs only for a pushed tag, depends on `validate`, `build`,
-   `build-android`, and `checksums`, and is the only job with
+   `build-android`, `build-ios-unsigned`, and `checksums`, and is the only job with
    `contents: write`. Its condition is
    `success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`;
    it never uses `if: always()`, so a failed or skipped prerequisite blocks
@@ -167,8 +175,10 @@ from the previous release's gets the checked-in
 release page learns about the one-time reset; later releases do not repeat it.
 Every release also appends the checked-in
 `docs/releases/android-apk.md` note, which says the Android app is installed
-from the APK file rather than a store. The assets are the nine installers and
-the checksum manifest:
+from the APK file rather than a store, and the
+`docs/releases/ios-unsigned.md` note, which says the iOS package must be
+signed by a sideloading tool first. The assets are the ten installers and the
+checksum manifest:
 
 - `natcatty-<version>-macos-arm64.dmg`
 - `natcatty-<version>-macos-amd64.dmg`
@@ -179,7 +189,8 @@ the checksum manifest:
 - `natcatty-<version>-linux-amd64.deb`
 - `natcatty-<version>-linux-arm64.deb`
 - `natcatty-<version>-android.apk`
-- the checksum manifest, which lists all nine with relative names
+- `natcatty-<version>-ios-unsigned.ipa`
+- the checksum manifest, which lists all ten with relative names
 
 A tag whose version has a pre-release suffix (for example
 `v0.1.0-rc.1`) produces a GitHub pre-release instead of a normal release, and
@@ -268,11 +279,11 @@ delta archives in the built artifacts.
 
 The Android APK is different: it is signed with natcatty's own release
 keystore, whose material lives only in repository secrets and never in the
-checkout. The release job verifies the APK's signature and expected
-certificate before publishing. There is still no store account: users install
-the APK from the release file. Development builds with no keystore fall back to
-the Android debug key. Keystore creation, backup, and the unrecoverable loss
-of the key are documented in [android-release.md](android-release.md).
+checkout; the build fails closed when a secret is missing. There is still no
+store account: users install the APK from the release file. Development builds
+with no keystore fall back to the Android debug key. Keystore creation, backup,
+and the unrecoverable loss of the key are documented in
+[android-release.md](android-release.md).
 
 ## Linux CJK fonts
 

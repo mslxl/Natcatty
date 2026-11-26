@@ -91,6 +91,7 @@ def is-artifact [name: string] {
         or ($base | str ends-with '.tar.gz')
         or ($base | str ends-with '-portable.zip')
         or ($base | str ends-with '.apk')
+        or ($base | str ends-with '.ipa')
         or (
             ($base | str ends-with '.exe')
             and (

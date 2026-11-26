@@ -9,5 +9,4 @@ installed app to update it in place.
 
 The APK is universal: it carries the `arm64-v8a`, `armeabi-v7a` and `x86_64`
 native libraries, and every library is built for 16 KB pages. It is signed
-with natcatty's own release key; the expected certificate fingerprint is
-recorded with the release configuration.
+with natcatty's own release key.

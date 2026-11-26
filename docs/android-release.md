@@ -39,12 +39,6 @@ Required repository secrets:
 | `ANDROID_KEY_ALIAS` | The key alias inside the keystore. |
 | `ANDROID_KEY_PASSWORD` | Optional. The key password; when unset MyGo uses the store password. Leave it unset for a PKCS12 keystore (PKCS12 uses one password). |
 
-Required repository variable (not secret; a certificate fingerprint is public):
-
-| Variable | Meaning |
-| --- | --- |
-| `ANDROID_SIGNING_CERT_SHA256` | The expected `Signer #1 certificate SHA-256 digest` from `apksigner verify --print-certs`. The job fails if the APK reports any other certificate. |
-
 The keystore is generated outside the repository and backed up outside it. For
 a new key:
 
@@ -58,9 +52,6 @@ keytool -genkeypair -v \
 base64 -w0 natcatty-release.keystore
 # macOS:
 base64 -i natcatty-release.keystore | tr -d '\n'
-
-# the expected fingerprint for ANDROID_SIGNING_CERT_SHA256:
-apksigner verify --print-certs a-built-release.apk
 ```
 
 Store the keystore and both passwords in a password manager and on an offline
@@ -133,11 +124,9 @@ workflow: a committed `.jks`, `.keystore`, `.p12`, `.pfx`, or a committed
 Locally the same commands were run with a throwaway keystore generated under
 `/tmp`:
 
-- `apksigner verify --print-certs` reports `Verifies`, APK Signature Scheme v2,
-  and the signer's certificate digest;
 - `apkanalyzer manifest version-code` reports the computed code;
 - `zipalign -c -P 16` and the per-ABI `llvm-readelf` check pass;
-- a debug build with no keystore verifies with the debug certificate.
+- a debug build with no keystore is debug-signed and is never published.
 
 A live GitHub Actions run is not possible on this host, so the workflow's YAML
 is checked structurally and the commands above are run locally. The job builds

@@ -194,11 +194,16 @@ nix develop .#android --command bash -c \
 
 # iOS device package. Needs a signing identity and profile in mygo.json.
 nix develop .#ios --command go tool mygo build -platform ios -o dist
+
+# iOS unsigned device package, for a sideloading tool to sign.
+nix develop .#ios --command bash -c \
+  'scripts/mobile/ios-syso.sh device && go tool mygo build -platform ios -unsigned -o dist'
 ```
 
-The simulator output is `dist/ios-simulator/Natcatty.app`; CI checks
-`vtool -show-build` reports `platform IOSSIMULATOR` before zipping it. The
-Android output is under `dist/android/`; a release renames it with
+The simulator output is `dist/ios-simulator/Natcatty.app`; `vtool -show-build`
+reports `platform IOSSIMULATOR` for it. The unsigned device output is
+`dist/ios-arm64/<name>.ipa`, carrying no signature and no embedded profile.
+The Android output is under `dist/android/`; a release renames it with
 `nu scripts/release.nu rename-assets --dir dist --version <version>`. Without a
 keystore the APK is signed with Gradle's debug key and is never published.
 
@@ -269,25 +274,15 @@ provider hidden rather than showing a button that cannot finish.
 
 ## CI
 
-`.github/workflows/phone-ci.yml` runs on every pull request and on pushes to
-`main` whose paths are not docs, Markdown, `LICENSE` or `NOTICE`. It also runs
-nightly at 05:41 UTC, on `workflow_dispatch`, and as `workflow_call` from the
-release workflow.
+There is no separate phone CI workflow. The phone targets are built by the
+release workflow: `build-android` produces the signed APK and
+`build-ios-unsigned` the unsigned device package, so they are exercised on a
+tag push or a `workflow_dispatch` dry run. The compile, link, dependency and
+smoke scripts under `scripts/mobile/` remain available for local development
+(the "Build an app" and device smoke commands above use them).
 
-| Job | What it proves |
-| --- | --- |
-| `phone-deps` | The phone graph reaches no desktop-only package or plugin manifest. |
-| `compile-ios` | The simulator and device c-archives compile and link with the pinned object. |
-| `compile-android` | Every ABI in `android-abis.txt` compiles and links; `libmygoapp.so` is the right ELF class and machine and has 16 KB `LOAD` segments. |
-| `link-smoke-ios` / `link-smoke-android` | Every binding symbol is defined exactly once in the linked object, and the iOS fallback `-lz` path works. |
-| `ios-simulator-artifact` | Builds `dist/ios-simulator/Natcatty.app`, verifies it is an `IOSSIMULATOR` bundle, and uploads `natcatty-ios-simulator-<sha>.zip`. |
-| `ios-device-package` | Only with an Apple account; builds and uploads an `.ipa`. Skipped otherwise. |
-| `smoke-ios` / `smoke-android` | Device smoke on phone-code pull requests, nightly, and before a tag. |
-
-The expensive smoke jobs are selected by the `changes` job. Compile, link and
-dependency jobs run on every code pull request, so a phone build is never
-skipped because a path filter guessed wrong. Because the native release is
-unpublished, the fetch step builds Ghostty from the pinned source in CI.
+Because the native release is unpublished, the release's fetch step builds
+Ghostty from the pinned source.
 
 ## Releasing
 
@@ -296,9 +291,6 @@ by `internal/tools/androidversion`; the validate job fails unless the new code i
 greater than the previous release tag's. A pushed `v*` tag publishes a GitHub
 release; `workflow_dispatch` with a `tag` input validates and builds as a dry
 run and publishes nothing.
-
-`.github/workflows/release.yml` calls `phone-ci.yml` as `phone-smoke` before it
-builds, so a broken phone build cannot reach a release tag.
 
 ### Android APK
 
@@ -314,19 +306,18 @@ The `build-android` job:
    manifest with `nu scripts/release.nu android-manifest`;
 5. builds one universal APK with `go tool mygo build -platform android -o dist`,
    deletes the Play `.aab`, and renames the APK;
-6. verifies the signature and certificate with `apksigner verify --print-certs`,
-   the version code with `apkanalyzer manifest version-code`, and every ABI's
-   16 KB `LOAD` alignment with `zipalign -c -P 16 4` and `llvm-readelf`.
+6. verifies the version code with `apkanalyzer manifest version-code` and
+   every ABI's 16 KB `LOAD` alignment with `zipalign -c -P 16 4` and
+   `llvm-readelf`.
 
-Required repository secrets and variable:
+Required repository secrets:
 
-| Name | Kind | Meaning |
-| --- | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | secret | The PKCS12/JKS keystore, base64-encoded. |
-| `ANDROID_KEYSTORE_PASSWORD` | secret | The keystore secret; MyGo receives it as `MYGO_ANDROID_KEYSTORE_PASSWORD`. |
-| `ANDROID_KEY_ALIAS` | secret | The key alias in the keystore. |
-| `ANDROID_KEY_PASSWORD` | secret, optional | The key secret. Leave unset for PKCS12; MyGo then reuses the keystore secret. |
-| `ANDROID_SIGNING_CERT_SHA256` | repository variable | The expected `Signer #1 certificate SHA-256 digest`. The job fails on any other certificate. |
+| Secret | Meaning |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | The PKCS12/JKS keystore, base64-encoded. |
+| `ANDROID_KEYSTORE_PASSWORD` | The keystore secret; MyGo receives it as `MYGO_ANDROID_KEYSTORE_PASSWORD`. |
+| `ANDROID_KEY_ALIAS` | The key alias in the keystore. |
+| `ANDROID_KEY_PASSWORD` | Optional. The key secret. Leave unset for PKCS12; MyGo then reuses the keystore secret. |
 
 The job fails closed when a required value is missing. Keystore generation,
 backup, the unrecoverable loss of the key and the local verification commands
@@ -334,23 +325,34 @@ are in [android-release.md](android-release.md).
 
 ### iOS
 
-CI uploads the simulator app as the `natcatty-ios-simulator-<sha>` artifact. A
-device package is produced only when the `APPLE_DEVELOPMENT_TEAM` repository
-variable exists, together with `APPLE_CERTIFICATE_P12`,
-`APPLE_CERTIFICATE_PASSWORD` and `APPLE_PROVISIONING_PROFILE`. Without them the
-job is skipped, so CI never uploads an unsigned device package. There is no App
-Store or TestFlight step.
+The release workflow's `build-ios-unsigned` job builds the device app with
+`go tool mygo build -platform ios -unsigned` (patch 0009) and attaches
+`natcatty-<version>-ios-unsigned.ipa` to the release. It needs no Apple
+account. The package carries no signature and no provisioning profile, so it
+is not installable as downloaded: a sideloading tool (AltStore, Sideloadly, or
+Xcode with a free Apple ID) signs it with the installer's own identity and
+profile (ADR-0027). The job verifies that the package is device-targeted
+(`vtool -show-build` reports `platform IOS`) and that it carries neither a
+`_CodeSignature` directory nor an `embedded.mobileprovision`.
+
+No simulator app or signed device package is produced by CI. A signed package
+would need an Apple developer account, a certificate, a provisioning profile
+and a job of its own; `scripts/mobile/ios-syso.sh` and
+`go tool mygo build -platform ios` still build one locally when those exist.
+There is no App Store or TestFlight step.
 
 ### Handing out a build
 
 Distribution is direct: the Android APK is installed from the release file
-(`adb install` or opening it on the device), and there is no store account or
-store update channel. A newer release installs over the installed app. The
-desktop, Android and remaining release assets are described in
+(`adb install` or opening it on the device), and the unsigned iOS IPA is first
+signed by a sideloading tool with the installer's Apple ID. There is no store
+account or store update channel; a newer release installs over the installed
+app. The desktop, Android and remaining release assets are described in
 [packaging.md](packaging.md). The release body appends
-[`docs/releases/android-apk.md`](releases/android-apk.md) on every release and
-[`docs/releases/identifier-migration.md`](releases/identifier-migration.md) only
-on the first release whose identifier differs from the previous tag's.
+[`docs/releases/android-apk.md`](releases/android-apk.md) and
+[`docs/releases/ios-unsigned.md`](releases/ios-unsigned.md) on every release,
+and [`docs/releases/identifier-migration.md`](releases/identifier-migration.md)
+only on the first release whose identifier differs from the previous tag's.
 
 ## Troubleshooting a failed phone build
 
@@ -430,18 +432,12 @@ exits non-zero rather than leaving a half-booted device.
 - `secret ANDROID_KEYSTORE_BASE64 is not set` (or `ANDROID_KEYSTORE_PASSWORD`
   or `ANDROID_KEY_ALIAS`):
   configure the repository secrets in the table above. The job fails closed.
-- `repository variable ANDROID_SIGNING_CERT_SHA256 is not set`, or the APK
-  certificate is not the expected one: set the variable to the release
-  certificate's SHA-256 digest; a different digest means the wrong keystore or
-  a stale variable.
 - `APK versionCode <n> is not the computed <m>`, or the validate job's version
   code is not greater than the previous tag's: fix the version in `mygo.json`;
   a release cannot reuse or lower a code.
 - `mygo.json commits an android.keystore path` or a committed keystore file:
   remove the signing material from the checkout; the release job supplies it
   from secrets.
-- `ios-device-package` is skipped: no `APPLE_DEVELOPMENT_TEAM`; this is
-  expected until the project has a paid Apple developer account.
 
 ### Keyboard and IME notes
 

@@ -118,6 +118,25 @@ default: no attribute, no resource.
 At an upgrade, drop the patch if upstream carries a cleartext-domains option;
 otherwise rework it against the new generator.
 
+## The unsigned iOS device patch
+
+`0009-unsigned-ios-device-build.patch` makes a device package buildable
+without an Apple account. In v0.10.0 `buildIOS` always picks a provisioning
+profile and signs with it, so a machine with no profile cannot produce one and
+CI could offer only the simulator app. The patch adds `mygo build -unsigned`:
+the device app is compiled and packaged exactly as before, but no profile is
+picked, no entitlements are read and `codesign` never runs, so the `.ipa`
+leaves `Payload/` unsigned for AltStore, Sideloadly or Xcode to sign with the
+installer's own identity. `-unsigned` is refused for the simulator (which
+stays ad hoc signed) and for any target other than `ios` or `ios/arm64`.
+
+It touches `cmd/mygo/build.go` and `cmd/mygo/ios.go`. The signed device
+package is unchanged: without the flag the build still requires
+`ios.team`/`ios.provisioningProfile` and signs with the profile.
+
+At an upgrade, drop the patch if upstream carries a way to build an unsigned
+device package; otherwise rework it against the new `buildIOS`.
+
 ## The fork carries the same desktop fixes
 
 Natcatty's desktop and phone terminal now run the source fork in `ui/terminal`

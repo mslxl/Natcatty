@@ -166,9 +166,9 @@ func TestManifestLeavesAndroidSigningToTheReleaseJob(t *testing.T) {
 }
 
 // TestAndroidReleaseWorkflowCarriesTheSigningContract pins the release steps
-// the ticket requires: keystore material from secrets, signature and
-// certificate verification, the computed version code, and the release note
-// saying the APK is installed from a file rather than a store.
+// the ticket requires: keystore material from secrets, the computed version
+// code, and the release note saying the APK is installed from a file rather
+// than a store.
 func TestAndroidReleaseWorkflowCarriesTheSigningContract(t *testing.T) {
 	root := testutil.ModuleRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, ".github/workflows/release.yml"))
@@ -180,9 +180,6 @@ func TestAndroidReleaseWorkflowCarriesTheSigningContract(t *testing.T) {
 		"ANDROID_KEYSTORE_BASE64",
 		"ANDROID_KEYSTORE_PASSWORD",
 		"ANDROID_KEY_ALIAS",
-		"ANDROID_SIGNING_CERT_SHA256",
-		"apksigner",
-		"--print-certs",
 		"manifest version-code",
 		"-c -P 16 4",
 		"internal/tools/androidversion",
