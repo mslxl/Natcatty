@@ -69,7 +69,7 @@ func runDevProfile() error {
 	mygo.App.SetPath(mygo.PathUserData, root)
 	mygo.App.SetPath(mygo.PathDownloads, filepath.Join(root, devProfileDownloads))
 	setDevProfileTemp(root)
-	return run(nil, runOptions{devProfile: true, secrets: secrets})
+	return run(runOptions{devProfile: true, secrets: secrets})
 }
 
 // prepareDevProfile resolves and creates the profile directory. getwd is a

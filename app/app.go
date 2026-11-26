@@ -108,55 +108,21 @@ import (
 
 // Run starts Natcatty and blocks until the application quits.
 func Run() error {
-	// The packaged-artifact smoke mode is dormant unless the complete
-	// environment contract is present. It isolates user data before any store
-	// opens, so the real Vault and preferences are never touched.
-	smoke, smokeActive, err := packagedSmokeFromEnv(os.Getenv)
-	if err != nil {
-		writePackagedSmokeActivationFailure(os.Getenv, err)
-		return err
+	// A development build keeps its Vault and secrets in the working
+	// directory, never in the real profile or the OS credential store.
+	if mygo.IsDev() {
+		return runDevProfile()
 	}
-	if !smokeActive {
-		// A development build keeps its Vault and secrets in the working
-		// directory, never in the real profile or the OS credential store.
-		if mygo.IsDev() {
-			return runDevProfile()
-		}
-		return run(nil, runOptions{})
-	}
-	if err := smoke.prepare(); err != nil {
-		smoke.writeStartupFailure(err)
-		return err
-	}
-	mygo.App.SetPath(mygo.PathUserData, smoke.cfg.ProfileDir)
-	err = run(smoke.afterReady, runOptions{packagedSmoke: true, secretService: smoke.secretService})
-	if !smoke.didFinish() {
-		// The app can exit before readiness (for example when another
-		// instance owns the single-instance lock). Never let that look like a
-		// green smoke run.
-		if err == nil {
-			err = errors.New("packaged smoke: the app exited before the smoke ran")
-		}
-		smoke.writeStartupFailure(err)
-	}
-	return err
+	return run(runOptions{})
 }
 
 // runOptions are the composition-root decisions that must be made before the
 // stores and services are built. They are explicit arguments, never globals.
 type runOptions struct {
-	// packagedSmoke keeps the isolated smoke process free of listeners. It
-	// skips the single-instance lock, which would hand the launch to a running
-	// app, and does not start the external MCP loopback listener.
-	packagedSmoke bool
 	// devProfile keeps a development build on a throwaway profile in the
 	// working directory. Run sets it only when MyGo reports a development
 	// build, so a production build never sees it.
 	devProfile bool
-	// secretService, when set, scopes the OS credential store to this service.
-	// The packaged smoke sets it to a per-profile name so an isolated run never
-	// reads or writes the user's real entries.
-	secretService string
 	// secrets, when set, replaces the OS credential store outright. Debug
 	// harnesses pass an in-memory store so an unattended run never reaches
 	// the keychain or waits on its permission prompt.
@@ -164,9 +130,9 @@ type runOptions struct {
 }
 
 // isolated reports whether the process must stay away from the user's real
-// data and machine integration. The packaged smoke and the dev profile both
-// qualify; the normal app does not.
-func (o runOptions) isolated() bool { return o.packagedSmoke || o.devProfile }
+// data and machine integration. The dev profile qualifies; the normal app
+// does not.
+func (o runOptions) isolated() bool { return o.devProfile }
 
 // suppressesDesktopIntegration reports whether the process must not touch the
 // tray, global hotkeys, login items, notifications, or the Dock icon. The dev
@@ -182,10 +148,8 @@ func (o runOptions) importsShellHistory() bool { return !o.isolated() }
 // isolated run must not switch the user's real handler to a temporary build.
 func (o runOptions) registersURLScheme() bool { return !o.isolated() }
 
-// run is the composition root proper. afterReady, when non-nil, runs on the UI
-// thread after the main window exists; the smoke modes use it to assert
-// readiness, optionally drive real Sessions, and quit.
-func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) error {
+// run is the composition root proper.
+func run(options runOptions) error {
 	var windows *windowManager
 	var mainWindow hostWindow
 	var gate *uiapplock.Gate
@@ -523,13 +487,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// Session's suggestions from memory and never reach the journal.
 	transientRegistry := newTransientCommands()
 
-	// The packaged smoke scopes OS credential-store entries to a per-profile
-	// service. The store is still the platform keychain, but an isolated run
-	// neither reads nor writes the user's real entries.
 	secretBackend := platformsecrets.Store(platformsecrets.System{})
-	if options.secretService != "" {
-		secretBackend = platformsecrets.Scoped{Service: options.secretService}
-	}
 	if options.secrets != nil {
 		secretBackend = options.secrets
 	}
@@ -2038,16 +1996,6 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		if focusRequested {
 			focusRequested = false
 			windows.FocusMain()
-		}
-
-		if afterReady != nil {
-			afterReady(mainWindow, packagedSmokeDeps{
-				vault:       vaultService,
-				preferences: preferenceService,
-				shell:       shellState,
-				sessions:    sessions,
-				knownHosts:  database,
-			})
 		}
 	})
 
