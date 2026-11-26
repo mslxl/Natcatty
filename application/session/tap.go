@@ -278,6 +278,16 @@ type terminalTap struct {
 	inputCursor  int
 	inputPending []byte
 	inputEscape  inputState
+	// inputLost reports that the line editor changed the buffer in a way the
+	// tap cannot mirror: history recall (Up/Down), reverse search (Ctrl+R),
+	// word kills and yanks (Ctrl+W/Y), or a transpose (Ctrl+T) replace or
+	// reorder text the tap never sees. The tracked line is then a hybrid of
+	// what the user typed and what the editor recalled, and recording it at
+	// Enter writes a command that never ran — the garbled rows autocomplete
+	// later offers. The capture is discarded instead: no row is better than a
+	// wrong row, because the hook and the shell's own native marks still
+	// capture what they can prove. The next Enter or Ctrl+C re-arms the tap.
+	inputLost bool
 	// inputCSIParams holds the parameter bytes of the CSI sequence being
 	// parsed, so the tap can recognize the bracketed-paste markers.
 	inputCSIParams []byte
@@ -1978,6 +1988,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			t.inputBuffer = ""
 			t.inputCursor = 0
 			t.inputPending = nil
+			t.inputLost = false
 			// Ctrl+C never emits by itself: the shell may still report an exit
 			// code such as 130, or a prompt fallback or Session close may
 			// finalize the command with an unknown exit.
@@ -2010,6 +2021,14 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				t.inputCursor = 0
 				changed = true
 			}
+		case 0x12, 0x17, 0x19, 0x14, 0x0e, 0x10:
+			// Ctrl+R reverse search, Ctrl+W word kill, Ctrl+Y yank, Ctrl+T
+			// transpose, Ctrl+N/P history step: each rewrites the buffer from
+			// the shell's own history or kill ring, which the tap never sees.
+			// A wrong capture is worse than none — the hybrid line becomes a
+			// command that never ran — so the capture is discarded.
+			t.inputPending = nil
+			t.invalidateInputLocked()
 		case 0x7f, 0x08:
 			t.inputPending = nil
 			if t.deleteInputRuneBeforeCursor() {
@@ -2017,9 +2036,11 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			}
 		case '\r', '\n':
 			command := strings.TrimSpace(t.inputBuffer)
+			lost := t.inputLost
 			t.inputBuffer = ""
 			t.inputCursor = 0
 			t.inputPending = nil
+			t.inputLost = false
 			if t.hookActive {
 				// The installed hook's private preexec sequence is the only
 				// authority while it is active. Typed Enter must not start,
@@ -2038,7 +2059,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				changed = true
 				continue
 			}
-			if command != "" {
+			if command != "" && !lost {
 				if previous := t.finalizePendingLocked(now, false, 0, false); previous != nil {
 					// A new Enter finalizes the previous command with an
 					// unknown exit and no finish time before the next one
@@ -2166,8 +2187,10 @@ func (t *terminalTap) deleteInputRuneAtCursor() bool {
 }
 
 // applyInputCSI mirrors the cursor-editing control sequences a line editor
-// understands. Other sequences, including the bracketed-paste markers, leave
-// the tracked cursor alone.
+// understands. The history keys are the ones it cannot mirror: Up and Down
+// replace the whole buffer with a history entry the tap never sees, so the
+// capture is discarded rather than left a hybrid. Other sequences, including
+// the bracketed-paste markers, leave the tracked cursor alone.
 func (t *terminalTap) applyInputCSI(final byte) {
 	params := t.inputCSIParams
 	switch final {
@@ -2175,6 +2198,11 @@ func (t *terminalTap) applyInputCSI(final byte) {
 		t.moveInputCursor(-1)
 	case 'C':
 		t.moveInputCursor(1)
+	case 'A', 'B':
+		// Up/Down recall history in every shell line editor (readline, zle,
+		// PSReadLine, and the bare shell's own). A modifier form (CSI 1;5A and
+		// friends) is still a history or word motion the tap cannot model.
+		t.invalidateInputLocked()
 	case 'H':
 		t.inputCursor = 0
 	case 'F':
@@ -2189,6 +2217,16 @@ func (t *terminalTap) applyInputCSI(final byte) {
 			t.deleteInputRuneAtCursor()
 		}
 	}
+}
+
+// invalidateInputLocked drops the tracked input after the line editor changed
+// it in a way the tap cannot mirror. The buffer and cursor are kept for the
+// autocomplete popup — the text still on screen is a better completion target
+// than nothing — but Enter will not record the hybrid as a command. Typing
+// more characters does not lift the invalidation: the recalled base stays
+// unknown, so the line never becomes traceable again in this capture.
+func (t *terminalTap) invalidateInputLocked() {
+	t.inputLost = true
 }
 
 // firstCSIParameter is the first numeric parameter of a CSI sequence, for the
