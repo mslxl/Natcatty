@@ -12,6 +12,7 @@ import (
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/terminal/appview"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
@@ -202,14 +203,18 @@ func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, 
 // terminal, anchored at the cursor cell. They are Overlay children, so showing
 // or hiding them never changes the terminal's size. target is the terminal
 // view; its bounds are the previous frame's, one frame behind a resize, which
-// the placement clamps away.
+// the placement clamps away. The grid's measured cell and its inset inside
+// the pane come from the pane itself, so the anchor lands on the cursor's
+// cell rather than on an estimate from the box.
 func autocompleteLayers(c *ui.Context, target ui.Element, model chromeModel, cursor autocompleteCursor, cols, rows int, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	bounds := target.Bounds()
 	if bounds.W <= 0 || bounds.H <= 0 {
 		return
 	}
+	insetX, insetY := appview.LiveGridInset()
 	placement := placeAutocomplete(bounds, cursor, cols, rows, len(model.Suggestions),
-		model.ShowAutocomplete, model.ShowGhost && model.GhostText != "")
+		model.ShowAutocomplete, model.ShowGhost && model.GhostText != "",
+		appview.LiveGridCell(), insetX, insetY)
 	if !placement.ShowPopup && !placement.ShowGhost {
 		return
 	}

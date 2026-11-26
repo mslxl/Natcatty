@@ -137,6 +137,24 @@ func spanFont(sp ui.Span, size float32) ui.Font {
 // CellSize is the measured cell, for tests and diagnostics.
 func CellSize() (w, h float32) { return cellWidth, cellHeight }
 
+// CellGeometry is the measured cell as one value, for callers that position
+// an overlay over the live grid. Zero values mean no frame has measured the
+// cell yet.
+type CellGeometry struct {
+	W, H float32
+}
+
+// LiveGridCell is the cell the live grid is painted with this frame. The
+// overlay that anchors at a grid cell uses it rather than estimating from the
+// pane's box, which is larger than the grid by the pane's insets.
+func LiveGridCell() CellGeometry { return CellGeometry{W: cellWidth, H: cellHeight} }
+
+// LiveGridInset is where the live grid's first cell starts inside the pane
+// element, in DIPs: the flow's vertical margin plus the live box's own
+// padding. It is exported for the same overlay positioning LiveGridCell
+// serves.
+func LiveGridInset() (x, y float32) { return flowPadY + livePad, flowPadY + livePad }
+
 // availableWidth and availableHeight are the room the live screen gets, measured from
 // the flow's own layout (a scroller knows its viewport in the same frame it is built).
 var availableWidth, availableHeight float32

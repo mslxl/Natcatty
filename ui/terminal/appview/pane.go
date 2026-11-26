@@ -410,6 +410,26 @@ func CursorCell(snapshot []byte, size Size) (col, row int, ok bool) {
 	return col, row, true
 }
 
+// CursorScreenCell is where the cursor is on the visible screen in a terminal
+// snapshot: the absolute replay row of CursorCell, minus the rows above the
+// screen. A snapshot writes the scrollback first, then the screen, so a screen
+// pinned at the bottom by a clear that pushed rows up (ghostty's erase merges
+// them into scrollback) replays with its cursor hundreds of rows down, where
+// no cell of the visible screen is; an overlay anchored at that row floats
+// beside the terminal. The replay locates the screen's start from the
+// cursor's own position escape: the content written so far ends at the
+// cursor's line, so the scrollback above the screen is one row per line fed,
+// and screen row 0 is the row the cursor's line would land on if the grid had
+// scrolled all the way.
+func CursorScreenCell(snapshot []byte, size Size) (col, row int, ok bool) {
+	if len(snapshot) == 0 || size.Cols <= 0 || size.Rows <= 0 {
+		return 0, 0, false
+	}
+	sc := parseScreen(snapshot, size.Cols, size.Rows, false)
+	row = max(sc.r-sc.top, 0)
+	return sc.c, min(row, size.Rows-1), true
+}
+
 // CursorReplayRow is where the cursor is counted from the replay's first row,
 // including the rows the replay cap dropped above the grid, and whether the
 // snapshot is an alternate screen. Unlike CursorCell's row, this one keeps

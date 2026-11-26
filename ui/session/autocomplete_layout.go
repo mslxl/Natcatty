@@ -6,6 +6,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"golang.org/x/text/width"
+
+	"github.com/mslxl/natcatty/ui/terminal/appview"
 )
 
 // The autocomplete list floats over the terminal instead of taking rows above
@@ -24,8 +26,9 @@ const (
 	autocompleteGhostHeight  = 18
 	autocompleteMaxWidth     = 560
 	// terminalPaddingX and terminalPaddingY are MyGo's default grid padding
-	// (terminal.Options.Padding left zero), in DIPs. The cursor cell is
-	// measured from the padding box, so they place the list beside it.
+	// (terminal.Options.Padding left zero), in DIPs. They are the fallback
+	// estimate for a terminal whose own cell size is not known; the pane's
+	// measured cell replaces them whenever a frame has been drawn.
 	terminalPaddingX = 6
 	terminalPaddingY = 4
 )
@@ -52,12 +55,52 @@ type autocompletePlacement struct {
 	ShowGhost bool
 }
 
+// autocompleteCursorFromSnapshot locates the cursor cell from the terminal's
+// VT snapshot and the line being typed. The snapshot is the emulator's own
+// state, so the cursor cell is authoritative: unlike the terminal's Text,
+// which mixes scrollback and screen rows indistinguishably, the replay carries
+// the cursor escape itself and never confuses a clear that left scrollback in
+// place for a screen full of output. The row is the cursor's screen row, not
+// its replay row: a clear that merged output into scrollback leaves the prompt
+// at the screen's top, and anchoring at the replay row — which counts the
+// scrollback in — drops the popup to the bottom of the window or off it. The
+// command's first row is derived from the typed input: a shell keeps the
+// cursor at the end of the typed line, so the rows the input wraps over count
+// back from the cursor's row.
+func autocompleteCursorFromSnapshot(snapshot []byte, input string, cols, rows int) autocompleteCursor {
+	if cols < 1 {
+		cols = 80
+	}
+	if rows < 1 {
+		rows = 24
+	}
+	col, row, ok := appview.CursorScreenCell(snapshot, appview.Size{Cols: cols, Rows: rows})
+	if !ok {
+		return autocompleteCursor{}
+	}
+	// The command being typed starts inputRows above the cursor: the rows the
+	// tracked input wraps onto after the first. A keystroke that has not
+	// echoed yet leaves both the snapshot cursor and the anchor one cell
+	// behind for a frame; the echo catches up on the next output and the
+	// anchor corrects itself, which the debounced popup absorbs.
+	inputRows := 0
+	if width := autocompleteCellWidth(input); width > 0 {
+		inputRows = (width - 1) / cols
+	}
+	cursor := autocompleteCursor{
+		Row:      min(max(row, 0), rows-1),
+		StartRow: min(max(row-inputRows, 0), rows-1),
+		Column:   min(max(col, 0), cols-1),
+	}
+	return cursor
+}
+
 // autocompleteCursorFromText locates the cursor cell from the terminal's text
-// and the line being typed. MyGo's terminal does not expose its cursor, but a
-// shell keeps the cursor at the end of the typed line, so the last line and
-// its width place both the cursor and the start of the command. Text includes
-// scrollback; counting from the bottom of the screen keeps the row in the
-// viewport when output has scrolled.
+// and the line being typed, the fallback for a terminal whose snapshot cannot
+// be replayed. The last line and its width place both the cursor and the
+// start of the command, with the screen-full assumption the old behaviour
+// always made: correct for a contiguous screen, inflated when a clear leaves
+// scrollback above an unfilled screen.
 func autocompleteCursorFromText(text, input string, cols, rows int) autocompleteCursor {
 	if cols < 1 {
 		cols = 80
@@ -173,16 +216,25 @@ func autocompleteAssemblyHeight(popupRows int, ghost bool) float32 {
 // original's cursor-anchored placement: prefer below the input line, flip up
 // when the list cannot fit below and above is the better side, shrink the
 // list to the room actually available, then clamp into the terminal's screen.
-func placeAutocomplete(bounds ui.Rect, cursor autocompleteCursor, cols, rows, suggestions int, popup, ghost bool) autocompletePlacement {
-	width := min(bounds.W-2*terminalPaddingX, autocompleteMaxWidth)
-	cellW, cellH := autocompleteCellSize(bounds, cols, rows)
+// gridCell is the measured cell the pane paints its rows with and gridInset
+// where its first cell starts inside the bounds, so a cell's window position
+// is exact rather than an estimate from the terminal's total box. A zero cell
+// falls back to dividing the box by the grid, the estimate the plugin's own
+// padding assumptions make.
+func placeAutocomplete(bounds ui.Rect, cursor autocompleteCursor, cols, rows, suggestions int, popup, ghost bool, gridCell appview.CellGeometry, insetX, insetY float32) autocompletePlacement {
+	cellW, cellH := gridCell.W, gridCell.H
+	if cellW <= 0 || cellH <= 0 {
+		cellW, cellH = autocompleteCellSize(bounds, cols, rows)
+		insetX, insetY = terminalPaddingX, terminalPaddingY
+	}
+	width := min(bounds.W-2*insetX, autocompleteMaxWidth)
 	if width <= 0 || cellW <= 0 || cellH <= 0 {
 		return autocompletePlacement{}
 	}
-	screenLeft := bounds.X + terminalPaddingX
-	screenRight := bounds.X + bounds.W - terminalPaddingX
-	screenTop := bounds.Y + terminalPaddingY
-	screenBottom := bounds.Y + bounds.H - terminalPaddingY
+	screenLeft := bounds.X + insetX
+	screenRight := bounds.X + bounds.W - insetX
+	screenTop := bounds.Y + insetY
+	screenBottom := bounds.Y + bounds.H - insetY
 
 	wantRows := 0
 	if popup {

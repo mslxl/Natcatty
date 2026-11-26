@@ -864,10 +864,13 @@ func (s *Surface) view(c *ui.Context, focused, explicitFocus bool) ui.Element {
 			termView := s.terminalView(c)
 			// Suggestions float over the terminal at the cursor cell. Building
 			// them after the terminal gives the overlay the terminal's bounds,
-			// and an overlay row never takes room from the grid.
+			// and an overlay row never takes room from the grid. The cursor comes
+			// from the VT snapshot: the replay carries the emulator's own cursor
+			// position, so a screen whose scrollback outlives a clear cannot
+			// inflate the row the way counting Text's lines did.
 			if (model.ShowAutocomplete || model.ShowGhost) && s.terminal != nil {
 				cols, rows := s.terminal.Size()
-				cursor := autocompleteCursorFromText(s.terminal.Text(), model.Input, cols, rows)
+				cursor := autocompleteCursorFromSnapshot(s.terminal.Snapshot(), model.Input, cols, rows)
 				autocompleteLayers(c, termView, model, cursor, cols, rows, m, t, actions)
 			}
 		}
