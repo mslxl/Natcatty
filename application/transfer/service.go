@@ -79,6 +79,31 @@ func (s *Service) OpenRemote(ctx context.Context, hostID model.HostID, label str
 	return files, nil
 }
 
+// OpenTarget opens a remote target. A saved Host goes through OpenRemote; an
+// unsaved Quick Connect target goes through the opener's EndpointOpener
+// capability, which dials the endpoint with the Session's one-shot credential.
+func (s *Service) OpenTarget(ctx context.Context, target RemoteTarget) (FileSystem, error) {
+	if target.Saved() {
+		return s.OpenRemote(ctx, target.HostID, target.Label)
+	}
+	if s == nil || s.remote == nil {
+		return nil, failure(KindUnsupported, domainsftp.OpCopy, "", errors.New("sftp: no remote opener"))
+	}
+	opener, ok := s.remote.(EndpointOpener)
+	if !ok {
+		return nil, failure(KindUnsupported, domainsftp.OpCopy, "",
+			errors.New("sftp: this build cannot open an unsaved target"))
+	}
+	files, err := opener.OpenEndpoint(ctx, target)
+	if err != nil {
+		if _, ok := err.(*Error); ok {
+			return nil, err
+		}
+		return nil, &Error{Kind: KindConnection, Cause: err}
+	}
+	return files, nil
+}
+
 // Hosts lists the saved Hosts for the picker. A service without a source has
 // no remote targets.
 func (s *Service) Hosts(ctx context.Context) ([]HostTarget, error) {

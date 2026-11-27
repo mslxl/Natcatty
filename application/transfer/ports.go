@@ -7,6 +7,7 @@ package transfer
 import (
 	"context"
 	"io"
+	"strconv"
 
 	"github.com/mslxl/natcatty/domain/model"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
@@ -123,6 +124,69 @@ type LocalOpener interface {
 // tests bind a fake.
 type RemoteOpener interface {
 	OpenRemote(ctx context.Context, hostID model.HostID, label string) (FileSystem, error)
+}
+
+// RemoteTarget is one remote endpoint a pane can open. A saved Host carries
+// its HostID; an unsaved Quick Connect target has an empty HostID and carries
+// the endpoint and the one-shot password that opened its Session.
+// RemoteJump is one jump Host in a target's ad-hoc chain, ordered first =
+// closest to the client. A saved jump names a Vault Host; a jump with no
+// HostID is temporary, carrying the endpoint the user typed and its one-shot
+// credential. It mirrors the Session layer's jump without importing it, so
+// this context keeps its architectural boundary. Everything in it is
+// memory-only: a temporary jump's password is never persisted or logged.
+type RemoteJump struct {
+	HostID   model.HostID
+	Label    string
+	Hostname string
+	Port     int
+	Username string
+	Password string
+}
+
+type RemoteTarget struct {
+	HostID   model.HostID
+	Label    string
+	Hostname string
+	Port     int
+	Username string
+	// Password is memory-only. It travels from the Session that already holds
+	// it to the SSH handshake, and is never persisted or logged.
+	Password string
+	// Jumps is the ad-hoc jump chain the owning Session dialed, memory-only
+	// like the password. Empty for a saved Host, whose chain is resolved
+	// from the Vault.
+	Jumps []RemoteJump
+}
+
+// Saved reports whether the target is a Vault Host.
+func (t RemoteTarget) Saved() bool { return t.HostID != "" }
+
+// EndpointKey identifies the target for Tab reuse. A saved Host is identified
+// by its ID; an unsaved target by its endpoint and chain, not its password,
+// so a second Quick Connect through the same hops follows the Tab already
+// browsing it.
+func (t RemoteTarget) EndpointKey() string {
+	if t.Saved() {
+		return "host:" + string(t.HostID)
+	}
+	key := "quick:" + t.Username + "@" + t.Hostname + ":" + strconv.Itoa(t.Port)
+	for _, jump := range t.Jumps {
+		hop := jump.Username + "@" + jump.Hostname + ":" + strconv.Itoa(jump.Port)
+		if jump.HostID != "" {
+			hop = "#" + string(jump.HostID)
+		}
+		key += ">via:" + hop
+	}
+	return key
+}
+
+// EndpointOpener is an optional RemoteOpener capability: an opener that can
+// also dial a target with no Vault Host record. It is what lets the side panel
+// browse a Quick Connect Session. An opener without it refuses such targets
+// instead of pretending they are local.
+type EndpointOpener interface {
+	OpenEndpoint(ctx context.Context, target RemoteTarget) (FileSystem, error)
 }
 
 // HostTarget is one saved Host a remote pane can open. It is a display record
