@@ -527,6 +527,57 @@ func TestScreenExtendedSGR(t *testing.T) {
 	}
 }
 
+// Palette index 4 (ANSI blue) in 38;5;4, 38:5:4, 48;5;4 or RGB component 4 in
+// 38;2;4;... must never be mistaken for SGR 4 (underline). Bash's default PS1
+// colors the prompt path `~` in bold blue (\x1b[01;34m), which Ghostty's
+// snapshot serializes with palette index 4 — mistaking that 4 for underline
+// made prompt paths look like blue underlined links.
+func TestSGRPaletteColor4DoesNotUnderlinePromptPath(t *testing.T) {
+	for _, seq := range []string{
+		"\x1b[1;38;5;4m~\x1b[0m",
+		"\x1b[1;38:5:4m~\x1b[0m",
+		"\x1b[38;2;4;10;20m~\x1b[0m",
+		"\x1b[38:2::4:10:20m~\x1b[0m",
+		"\x1b[48;5;4m~\x1b[0m",
+		"\x1b[4;0m~",
+	} {
+		sc := parseScreen([]byte(seq), 20, 2, false)
+		lines, _, _ := sc.Lines()
+		if len(lines[0]) == 0 {
+			t.Fatalf("%q produced empty row", seq)
+		}
+		if lines[0][0].Underline {
+			t.Errorf("%q unexpectedly set Underline=true: %+v", seq, lines[0][0])
+		}
+	}
+
+	// End-to-end through the real Ghostty terminal snapshot with Ubuntu/Debian PS1.
+	conn := newNopConn()
+	term, err := terminal.New(terminal.Options{Conn: conn, Scrollback: -1})
+	if err != nil {
+		t.Skipf("the terminal plugin is unavailable here: %v", err)
+	}
+	defer func() { _ = term.Close() }()
+	term.Resize(40, 6)
+	term.Feed([]byte("\x1b[01;32mmslxl@ecs65538\x1b[00m:\x1b[01;34m~\x1b[00m$ "))
+	lines, _, _ := Screen(term, Size{Cols: 40, Rows: 6}, false)
+	if len(lines) == 0 {
+		t.Fatal("no rows")
+	}
+	foundTilde := false
+	for _, sp := range lines[0] {
+		if strings.Contains(sp.Text, "~") {
+			foundTilde = true
+			if sp.Underline {
+				t.Fatalf("prompt path ~ was underlined in Ghostty snapshot: %+v", sp)
+			}
+		}
+	}
+	if !foundTilde {
+		t.Fatalf("did not find ~ in prompt row: %+v", lines[0])
+	}
+}
+
 // The real plugin preserves extended SGR in its snapshot, so the whole path works.
 func TestLiveExtendedSGRFromTerminal(t *testing.T) {
 	conn := newNopConn()
