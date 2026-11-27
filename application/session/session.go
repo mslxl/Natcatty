@@ -454,6 +454,21 @@ type MoshPredictionDisplaySetter interface {
 	SetPredictionDisplay(mode moshmodel.PredictionDisplay)
 }
 
+// Jump is one jump Host a Session dials before reaching its target, ordered
+// first = closest to the client. A saved jump names a Vault Host, whose saved
+// endpoint and credentials apply; a jump with no HostID is temporary: it
+// carries the endpoint the user typed, and Password its one-shot credential.
+// A temporary jump's password is memory-only: it is never persisted in the
+// Workspace or the Vault.
+type Jump struct {
+	HostID   model.HostID
+	Label    string
+	Hostname string
+	Port     int
+	Username string
+	Password string
+}
+
 // StartSpec describes a Session to open. Command empty asks the transport
 // adapter for its platform's default shell. SSH Sessions use HostID to read
 // the saved credential and Hostname, Port, and Username to reach the endpoint;
@@ -482,6 +497,12 @@ type StartSpec struct {
 	// already holds. Empty asks the transport to resolve the Host's saved
 	// credentials.
 	Password string
+	// Jumps is the jump chain the SSH-based transports dial before the
+	// target, ordered first = closest to the client. A saved Host's Vault
+	// chain is resolved by the route source; this slice is an ad-hoc chain
+	// the caller supplies, and it is prepended so its first hop is closest
+	// to the client. Temporary jumps are memory-only and never persisted.
+	Jumps []Jump
 	// X11Forwarding requests X11 forwarding for this SSH Session when the Host
 	// has it enabled and acknowledged. The transport factory turns it into a
 	// non-pooled Connection.
@@ -1763,6 +1784,43 @@ func (s *Session) ID() model.SessionID { return s.id }
 // HostID returns the Vault Host the Session was opened for. A local Session
 // has no Host and reports "".
 func (s *Session) HostID() model.HostID { return s.spec.HostID }
+
+// Endpoint is a remote Session's dial target. For an unsaved Quick Connect
+// Session it also carries the one-shot password that opened it, so a side
+// SFTP panel can reach the same peer without a Vault Host record. The password
+// is memory-only: callers must never persist it.
+type Endpoint struct {
+	Hostname string
+	Port     int
+	Username string
+	Password string
+	// Jumps is the ad-hoc jump chain the Session dialed before this endpoint,
+	// memory-only like the password.
+	Jumps []Jump
+}
+
+// RemoteEndpoint returns the endpoint a remote Session dialed, for a caller
+// that must reach the same peer over another channel. Only SSH-based
+// transports have one; a local, serial, Telnet, or VNC Session reports false.
+func (s *Session) RemoteEndpoint() (Endpoint, bool) {
+	if s == nil {
+		return Endpoint{}, false
+	}
+	switch s.spec.Kind {
+	case KindSSH, KindMosh, KindET:
+		if s.spec.Hostname == "" {
+			return Endpoint{}, false
+		}
+		return Endpoint{
+			Hostname: s.spec.Hostname,
+			Port:     s.spec.Port,
+			Username: s.spec.Username,
+			Password: s.spec.Password,
+			Jumps:    append([]Jump(nil), s.spec.Jumps...),
+		}, true
+	}
+	return Endpoint{}, false
+}
 
 // VNCConfiguration returns the normalized viewer configuration a VNC Session
 // was opened with. A byte-stream Session has none and reports the zero value.

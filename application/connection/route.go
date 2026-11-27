@@ -12,11 +12,16 @@ import (
 // Hop is one jump Host in a route. The target Host is not a Hop; it is the
 // Request itself. Jumps are ordered first = closest to the client.
 type Hop struct {
-	HostID     model.HostID
-	Label      string
-	Hostname   string
-	Port       int
-	Username   string
+	HostID   model.HostID
+	Label    string
+	Hostname string
+	Port     int
+	Username string
+	// Password is a one-shot plaintext credential for a jump that has no
+	// saved Host record, as a Quick Connect Session's temporary jump Host.
+	// Empty resolves credentials through AuthSource or PasswordSource. It is
+	// never persisted, logged, or cached.
+	Password   string
 	Algorithms AlgorithmPolicy
 	// ConfigFingerprint is the opaque digest of this jump's credential
 	// selection, so a credential change opens a fresh transport.

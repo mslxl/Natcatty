@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -2903,6 +2904,17 @@ func (s *State) openDescriptor(ctx context.Context,
 		if password, ok := s.paneCredentials.Get(string(paneID)); ok {
 			spec.Password = password
 		}
+		// The ad-hoc jump chain never reaches the Workspace descriptor — it is
+		// memory-only like the one-shot password — so a retry or reconnect
+		// unseals it here and redials every hop. Dropping it would silently
+		// dial the target directly, the exact behavior the chain exists to
+		// prevent.
+		if sealed, ok := s.paneCredentials.Get(jumpChainOwner(paneID)); ok {
+			var jumps []appsession.Jump
+			if err := json.Unmarshal([]byte(sealed), &jumps); err == nil {
+				spec.Jumps = jumps
+			}
+		}
 	}
 	switch descriptor.Kind {
 	case domainworkspace.SessionLocal:
@@ -3229,14 +3241,22 @@ func (s *State) closePaneSession(value *pane, preserve bool) {
 	}
 }
 
+// jumpChainOwner namespaces a Pane's sealed jump chain inside the credential
+// store, keeping it apart from the one-shot password the bare pane ID holds.
+func jumpChainOwner(paneID model.PaneID) string {
+	return string(paneID) + "\x00jumps"
+}
+
 // dropPaneCredential forgets the Quick Connect one-shot password the in-memory
 // store holds for this Pane. It runs when the Pane leaves the layout for good;
-// a retry keeps the credential so the redial can offer it again.
+// a retry keeps the credential so the redial can offer it again. The sealed
+// jump chain goes with it: a Pane that is gone has no redial left to serve.
 func (s *State) dropPaneCredential(value *pane) {
 	if value == nil || s.paneCredentials == nil {
 		return
 	}
 	s.paneCredentials.Drop(string(value.ID))
+	s.paneCredentials.Drop(jumpChainOwner(value.ID))
 }
 
 // removeTabAt removes the Tab at index and keeps the active index valid. It

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	appsession "github.com/mslxl/natcatty/application/session"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
@@ -31,17 +33,47 @@ type sftpRemoteOpener struct {
 	manager *appconnection.Manager
 	routes  routeSource
 	vault   vaultHostSource
+	// terminalSettings supplies the terminal-wide legacy-algorithm opt-in an
+	// unsaved target uses, matching the route its terminal Session dialed.
+	terminalSettings terminalSettingsSource
+}
+
+// remoteJumps converts the Session layer's ad-hoc jump chain into the
+// transfer context's own jump type. The transfer context may not import the
+// Session context, so the conversion lives here at the app boundary; every
+// field is memory-only in both.
+func remoteJumps(jumps []appsession.Jump) []apptransfer.RemoteJump {
+	if len(jumps) == 0 {
+		return nil
+	}
+	out := make([]apptransfer.RemoteJump, 0, len(jumps))
+	for _, jump := range jumps {
+		out = append(out, apptransfer.RemoteJump{
+			HostID:   jump.HostID,
+			Label:    jump.Label,
+			Hostname: jump.Hostname,
+			Port:     jump.Port,
+			Username: jump.Username,
+			Password: jump.Password,
+		})
+	}
+	return out
 }
 
 var _ apptransfer.RemoteConnector = sftpRemoteConnector{}
 
 // sftpRemoteConnector adapts the opener to the transfer context's selection
-// port.
+// port. target, when set, is an unsaved Quick Connect endpoint; the connector
+// dials it instead of resolving a Vault Host.
 type sftpRemoteConnector struct {
 	opener *sftpRemoteOpener
+	target *apptransfer.RemoteTarget
 }
 
 func (c sftpRemoteConnector) ConnectRemote(ctx context.Context, hostID model.HostID) (apptransfer.RemoteSession, error) {
+	if c.target != nil {
+		return c.opener.connectTarget(ctx, *c.target)
+	}
 	return c.opener.connect(ctx, hostID)
 }
 
@@ -82,6 +114,91 @@ func (o *sftpRemoteOpener) OpenRemote(ctx context.Context, hostID model.HostID, 
 			SudoPassword: password,
 		})
 	return files, err
+}
+
+// OpenEndpoint opens an unsaved Quick Connect target. It reuses the same
+// protocol selection and lease rules as a saved Host; the one-shot password
+// the Session already holds is passed to the handshake and never stored.
+func (o *sftpRemoteOpener) OpenEndpoint(ctx context.Context, target apptransfer.RemoteTarget) (apptransfer.FileSystem, error) {
+	if target.Saved() {
+		return o.OpenRemote(ctx, target.HostID, target.Label)
+	}
+	if o.manager == nil {
+		return nil, errors.New("app: no SSH connection manager")
+	}
+	if target.Hostname == "" {
+		return nil, errors.New("app: the unsaved target has no hostname")
+	}
+	files, _, err := apptransfer.SelectRemote(ctx,
+		sftpRemoteConnector{opener: o, target: &target},
+		apptransfer.RemoteOptions{Protocol: apptransfer.NormalizeFileProtocol("")})
+	return files, err
+}
+
+// connectTarget authenticates an unsaved Quick Connect endpoint for protocol
+// selection. It has no Vault record, so it dials the same pinned route its
+// terminal Session used — including the ad-hoc jump chain the Session carries
+// — and leaves the Host settings a saved record would supply at their
+// defaults. The connection is dedicated: the manager never parks it or lends
+// one unsaved target's transport to another.
+func (o *sftpRemoteOpener) connectTarget(ctx context.Context, target apptransfer.RemoteTarget) (apptransfer.RemoteSession, error) {
+	if o.manager == nil {
+		return nil, errors.New("app: no SSH connection manager")
+	}
+	// An unsaved target has no Vault record, so it has no saved jump chain or
+	// Network Profile; it resolves through the same route source as its Quick
+	// Connect terminal, so the app-wide default proxy and the terminal-wide
+	// legacy-algorithm opt-in reach the companion dial too. The ad-hoc chain
+	// the target carries is merged exactly as the terminal Session merged it.
+	var route appconnection.Route
+	if o.routes != nil {
+		resolved, err := o.routes.Route(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		route = resolved
+	} else {
+		route = unsavedAlgorithmRoute(o.terminalSettings)
+	}
+	specJumps := make([]appsession.Jump, 0, len(target.Jumps))
+	for _, jump := range target.Jumps {
+		specJumps = append(specJumps, appsession.Jump{
+			HostID:   jump.HostID,
+			Label:    jump.Label,
+			Hostname: jump.Hostname,
+			Port:     jump.Port,
+			Username: jump.Username,
+			Password: jump.Password,
+		})
+	}
+	route, err := mergeSpecJumps(ctx, o.routes, appsession.StartSpec{Jumps: specJumps}, route)
+	if err != nil {
+		return nil, err
+	}
+	request := appconnection.Request{
+		Hostname:          target.Hostname,
+		Port:              target.Port,
+		Username:          target.Username,
+		Password:          target.Password,
+		Jumps:             route.Jumps,
+		Proxy:             route.Proxy,
+		Network:           route.Network,
+		Algorithms:        route.Algorithms,
+		ConfigFingerprint: route.ConfigFingerprint,
+		LeaseKind:         appconnection.LeaseChannel,
+		Dedicated:         true,
+		Keepalive:         &appconnection.DefaultKeepalive,
+	}
+	lease, err := o.manager.Acquire(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &sftpRemoteSession{
+		opener:  o,
+		request: request,
+		lease:   lease,
+		backing: "quick:" + target.Username + "@" + target.Hostname + ":" + strconv.Itoa(target.Port),
+	}, nil
 }
 
 // connect authenticates the Host and returns the session protocol selection

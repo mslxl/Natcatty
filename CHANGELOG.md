@@ -66,6 +66,14 @@ requests; this file is the human-maintained changelog.
 
 ### Fixed
 
+- The terminal side panel now opens for every Session that has a remote file
+  system, not only saved SSH Hosts: a Quick Connect Session shows the Files
+  button and browses its endpoint without a Vault record, and Mosh and
+  EternalTerminal Hosts show it too. Settings → SFTP & Editor → Open the side
+  panel automatically now has an effect, opening the panel when a remote
+  Session finishes connecting. An unsaved endpoint is dialed with the one-shot
+  credential the Session already holds; it stays in memory and is never
+  written to the Workspace.
 - Restored GPL-3.0-or-later distribution compliance: a root `LICENSE` and
   `NOTICE`, expanded third-party notices (the per-crate copyright and mosh-go
   gaps are marked for ticket 15), an About & Licenses settings area, a
@@ -76,6 +84,22 @@ requests; this file is the human-maintained changelog.
 
 ### Changed
 
+- A Quick Connect SSH Session now resolves the app-wide default proxy exactly
+  as a saved Host does, and its side panel's SFTP companion dial follows the
+  same route; the terminal-wide legacy-algorithm opt-in is part of that route
+  for SSH, Mosh, and EternalTerminal. A Quick Connect still has no Network
+  Profile of its own, because it has no Host record to select one.
+- Quick Connect can dial a jump chain. The SSH form's Jump Hosts section adds
+  hops in order — closest to the client first — either borrowing a saved Vault
+  Host (its endpoint, credentials, and algorithm policy apply exactly as in a
+  saved chain) or typing a temporary hop whose one-shot password lives in
+  memory only and is never written to the Vault or the Workspace. Hops are
+  reordered and removed inline, the chain reaches SSH and EternalTerminal
+  Sessions and the side panel's SFTP companion dial, and Mosh refuses to
+  connect with a visible error instead of silently dropping the chain, because
+  its UDP flow cannot carry jump Hosts. Retrying or reconnecting a failed
+  Quick Connect redials every hop: the chain is sealed in memory next to the
+  one-shot password and is dropped when the Pane leaves the layout.
 - External MCP is now opt-in. A fresh or existing profile opens no loopback
   listener and publishes no discovery file until Settings → External MCP is
   enabled; `natcatty-mcp` clients cannot connect before that, and the stored

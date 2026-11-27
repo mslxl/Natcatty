@@ -743,13 +743,13 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 					c.Invalidate()
 				}
 			}
-			if host, ok := paneFiles(s, info); ok {
+			if target, ok := paneFiles(s, info); ok {
 				tabID := ref.id
 				actions.FilesOpen = s.FilesOpen(tabID)
 				actions.FilesIcon = dockIcon(s.FilesDock())
 				actions.ToggleFiles = func() {
 					ref.focus(info.ID)
-					s.ToggleFiles(tabID, host, info.Label)
+					s.ToggleFilesTarget(tabID, target)
 					c.Invalidate()
 				}
 			}
@@ -1010,28 +1010,20 @@ func paneMenu(c *ui.Context, m locales.Messages, ref tabRef, info state.PaneInfo
 	})
 }
 
-// paneFiles reports what the Pane's Files button browses: its Host for an SSH
-// Session, this computer (an empty Host) for a local one. Other Sessions,
-// such as serial and Telnet, have no file system to show.
-func paneFiles(s *state.State, info state.PaneInfo) (model.HostID, bool) {
+// paneFiles reports what the Pane's Files button browses: the Session's
+// endpoint for an SSH-based transport (SSH, Mosh, ET), or this computer for a
+// local one. An unsaved Quick Connect Session has no Host record but still
+// reaches its endpoint with the credential the Session holds. Other Sessions,
+// such as serial, Telnet, and VNC, have no file system to show.
+func paneFiles(s *state.State, info state.PaneInfo) (state.FilesTarget, bool) {
 	if !s.FilesAvailable() {
-		return "", false
+		return state.FilesTarget{}, false
 	}
 	owner, ok := info.Surface.(interface{ Session() *appsession.Session })
 	if !ok || owner.Session() == nil {
-		return "", false
+		return state.FilesTarget{}, false
 	}
-	session := owner.Session()
-	switch session.Snapshot().Kind {
-	case appsession.KindSSH:
-		if session.HostID() == "" {
-			return "", false
-		}
-		return session.HostID(), true
-	case appsession.KindLocal:
-		return "", true
-	}
-	return "", false
+	return state.FilesTargetFor(owner.Session(), info.Label)
 }
 
 // paneTitle is the Pane's display name: the Session's resolved title (which

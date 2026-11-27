@@ -9,12 +9,13 @@ import (
 
 // FilesPanel is the SFTP panel a Session Tab shows beside its terminal. The
 // app wires one panel state for the window; the shell shows it for the Tab
-// that opened it and points it at that Tab's Host.
+// that opened it and points it at that Tab's target.
 type FilesPanel struct {
 	// View renders the panel's SFTP tool about width DIPs wide.
 	View func(width float32) func(*ui.Context)
-	// ShowRemote browses a Host, keeping a listing it already has.
-	ShowRemote func(hostID model.HostID, label string)
+	// ShowRemote browses a remote target, keeping the listing a Tab already
+	// has. target is a saved Host or an unsaved Quick Connect endpoint.
+	ShowRemote func(target FilesTarget)
 	// ShowLocal browses this computer, for a local Session.
 	ShowLocal func()
 	// Dock reads the "Side panel position" setting and SetDock changes it.
@@ -43,11 +44,80 @@ const (
 	filesDefaultRatio  float32 = 62
 )
 
-// filesTarget is what a Tab's panel browses: a Host, or this computer when
-// host is empty.
-type filesTarget struct {
-	host  model.HostID
-	label string
+// FilesTarget is what a Tab's side panel browses. Local selects this
+// computer. Otherwise it names a saved Host, or an unsaved Quick Connect
+// endpoint when HostID is empty and Hostname is set.
+type FilesTarget struct {
+	// Local browses this computer, for a local Session.
+	Local bool
+	// HostID is the Vault Host, empty for an unsaved or local target.
+	HostID model.HostID
+	// Label names the target in the panel.
+	Label string
+	// Hostname, Port, and Username describe an unsaved Quick Connect endpoint.
+	Hostname string
+	Port     int
+	Username string
+	// Password is the one-shot credential the Quick Connect Session already
+	// holds. It stays in memory, reaches only the SSH handshake, and is never
+	// persisted with the Workspace.
+	Password string
+	// Jumps is the ad-hoc jump chain the Session dialed, memory-only like the
+	// password. Empty for a saved Host, whose chain is resolved from the
+	// Vault. The slice makes FilesTarget non-comparable; compare with
+	// sameFilesTarget.
+	Jumps []appsession.Jump
+}
+
+// Saved reports whether the target is a Vault Host.
+func (t FilesTarget) Saved() bool { return !t.Local && t.HostID != "" }
+
+// sameFilesTarget reports whether two targets browse the same file system:
+// every scalar field equal and the same jump chain, ordered.
+func sameFilesTarget(a, b FilesTarget) bool {
+	if a.Local != b.Local || a.HostID != b.HostID || a.Label != b.Label ||
+		a.Hostname != b.Hostname || a.Port != b.Port || a.Username != b.Username ||
+		a.Password != b.Password || len(a.Jumps) != len(b.Jumps) {
+		return false
+	}
+	for i := range a.Jumps {
+		if a.Jumps[i] != b.Jumps[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// FilesTargetFor reports the file system a Session's side panel browses. Only
+// SSH-based transports (SSH, Mosh, and ET) offer a remote file system; every
+// other transport has none. A remote Session with no saved Host is an unsaved
+// Quick Connect target: its endpoint and one-shot password come from the
+// Session itself.
+func FilesTargetFor(session *appsession.Session, label string) (FilesTarget, bool) {
+	if session == nil {
+		return FilesTarget{}, false
+	}
+	switch session.Snapshot().Kind {
+	case appsession.KindSSH, appsession.KindMosh, appsession.KindET:
+		if id := session.HostID(); id != "" {
+			return FilesTarget{HostID: id, Label: label}, true
+		}
+		endpoint, ok := session.RemoteEndpoint()
+		if !ok {
+			return FilesTarget{}, false
+		}
+		return FilesTarget{
+			Label:    label,
+			Hostname: endpoint.Hostname,
+			Port:     endpoint.Port,
+			Username: endpoint.Username,
+			Password: endpoint.Password,
+			Jumps:    append([]appsession.Jump(nil), endpoint.Jumps...),
+		}, true
+	case appsession.KindLocal:
+		return FilesTarget{Local: true}, true
+	}
+	return FilesTarget{}, false
 }
 
 // RenderOwner names the window that renders a shell surface this frame. The
@@ -107,6 +177,18 @@ type SideTool struct {
 // Pane toolbar has no Files button.
 func WithFilesPanel(panel FilesPanel) Option {
 	return func(s *State) { s.filesPanel = &panel }
+}
+
+// WithAutoOpenSidePanel supplies the live "Open the side panel automatically"
+// setting. When it reports true, a remote Session that finishes connecting
+// opens its Tab's side panel on that Session's file system. Without it the
+// panel stays closed until the user opens it.
+func WithAutoOpenSidePanel(enabled func() bool) Option {
+	return func(s *State) {
+		if enabled != nil {
+			s.autoOpenSidePanel = enabled
+		}
+	}
 }
 
 // WithSideTools adds tools to the side panel after SFTP, in the order given.
@@ -243,16 +325,34 @@ func (s *State) FilesOpen(tab model.TabID) bool {
 // ToggleFiles opens the Tab's SFTP panel on host, or on this computer when
 // host is empty, and closes it when it already shows that target.
 func (s *State) ToggleFiles(tab model.TabID, host model.HostID, label string) {
+	target := FilesTarget{Local: host == "", HostID: host, Label: label}
+	s.ToggleFilesTarget(tab, target)
+}
+
+// ToggleFilesTarget opens the Tab's side panel on target and closes it when it
+// already shows that target.
+func (s *State) ToggleFilesTarget(tab model.TabID, target FilesTarget) {
 	if !s.FilesAvailable() || tab == "" {
 		return
 	}
-	target := filesTarget{host: host, label: label}
-	if current, open := s.filesOpen[tab]; open && current.host == target.host {
+	if current, open := s.filesOpen[tab]; open && sameFilesTarget(current, target) {
 		s.CloseFiles(tab)
 		return
 	}
+	s.OpenFiles(tab, target)
+}
+
+// OpenFiles opens the Tab's side panel on target, leaving an already open
+// panel on that same target alone.
+func (s *State) OpenFiles(tab model.TabID, target FilesTarget) {
+	if !s.FilesAvailable() || tab == "" {
+		return
+	}
+	if current, open := s.filesOpen[tab]; open && sameFilesTarget(current, target) {
+		return
+	}
 	if s.filesOpen == nil {
-		s.filesOpen = map[model.TabID]filesTarget{}
+		s.filesOpen = map[model.TabID]FilesTarget{}
 	}
 	s.filesOpen[tab] = target
 	s.redraw()
@@ -267,9 +367,27 @@ func (s *State) CloseFiles(tab model.TabID) {
 	s.redraw()
 }
 
+// autoOpenFilesOnConnect opens the Tab's side panel for a Session that just
+// attached, when the setting asks for it. It applies to remote Sessions only:
+// the setting lives with the SFTP editor and a local shell has no remote to
+// browse. A transport without a file system (Telnet, VNC) is left alone.
+func (s *State) autoOpenFilesOnConnect(tab model.TabID, session *appsession.Session, label string) {
+	if s.autoOpenSidePanel == nil || !s.autoOpenSidePanel() {
+		return
+	}
+	if session == nil || session.Snapshot().Kind == appsession.KindLocal {
+		return
+	}
+	target, ok := FilesTargetFor(session, label)
+	if !ok || target.Local {
+		return
+	}
+	s.OpenFiles(tab, target)
+}
+
 // ToggleActiveFiles is the "Toggle side panel" shortcut: it opens the active
-// Tab's panel on the focused Session's Host, or closes it when it is open.
-// It reports false when the focused Pane has no file system to show.
+// Tab's panel on the focused Session's file system, or closes it when it is
+// open. It reports false when the focused Pane has no file system to show.
 func (s *State) ToggleActiveFiles() bool {
 	tab, _ := s.activeTab()
 	if tab == nil || !s.FilesAvailable() {
@@ -283,18 +401,11 @@ func (s *State) ToggleActiveFiles() bool {
 	if value == nil || value.session == nil {
 		return false
 	}
-	session := value.session
-	switch session.Snapshot().Kind {
-	case appsession.KindSSH:
-		if session.HostID() == "" {
-			return false
-		}
-		s.ToggleFiles(tab.ID, session.HostID(), value.descriptor.Label)
-	case appsession.KindLocal:
-		s.ToggleFiles(tab.ID, "", "")
-	default:
+	target, ok := FilesTargetFor(value.session, value.descriptor.Label)
+	if !ok {
 		return false
 	}
+	s.ToggleFilesTarget(tab.ID, target)
 	return true
 }
 
@@ -371,20 +482,20 @@ func (s *State) FilesViewFor(owner RenderOwner, tab model.TabID, width float32) 
 	if id != SideSFTP {
 		for _, tool := range s.sideTools {
 			if tool.ID == id {
-				return tool.View(SideTarget{Host: target.host, Label: target.label}, width)
+				return tool.View(SideTarget{Host: target.HostID, Label: target.Label}, width)
 			}
 		}
 		return nil
 	}
-	if s.filesShown == nil || *s.filesShown != target {
+	if s.filesShown == nil || !sameFilesTarget(*s.filesShown, target) {
 		shown := target
 		s.filesShown = &shown
-		if target.host == "" {
+		if target.Local {
 			if s.filesPanel.ShowLocal != nil {
 				s.filesPanel.ShowLocal()
 			}
 		} else if s.filesPanel.ShowRemote != nil {
-			s.filesPanel.ShowRemote(target.host, target.label)
+			s.filesPanel.ShowRemote(target)
 		}
 	}
 	return s.filesPanel.View(width)

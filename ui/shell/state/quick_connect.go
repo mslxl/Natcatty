@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -26,7 +28,40 @@ const (
 	QuickConnectIssueWebSocketPath
 	// QuickConnectIssueNoSessions means the shell has no Session service.
 	QuickConnectIssueNoSessions
+	// QuickConnectIssueJump means a temporary jump Host's address or port is
+	// missing or invalid.
+	QuickConnectIssueJump
+	// QuickConnectIssueJumpTransport means the chosen transport (Mosh) cannot
+	// carry a jump chain; the form refuses rather than silently dropping it.
+	QuickConnectIssueJumpTransport
 )
+
+// QuickConnectJumpKind selects how one jump Host of the chain is reached.
+type QuickConnectJumpKind int
+
+const (
+	// QuickConnectJumpSaved borrows a Vault Host's endpoint, credentials, and
+	// algorithm policy, exactly as a hop of that Host's saved chain would.
+	QuickConnectJumpSaved QuickConnectJumpKind = iota
+	// QuickConnectJumpTemporary is an ad-hoc endpoint typed for this Session
+	// alone. Its password is one-shot and never leaves memory.
+	QuickConnectJumpTemporary
+)
+
+// QuickConnectJump is one jump Host in the form's chain, ordered first =
+// closest to the client. A saved jump carries only the Host reference; a
+// temporary jump carries its endpoint, with Port text like the form's own so
+// an incomplete entry can be corrected without coercion. Nothing in it is
+// persisted: the chain lives in memory for the Session it connects.
+type QuickConnectJump struct {
+	Kind     QuickConnectJumpKind
+	HostID   model.HostID
+	Label    string
+	Hostname string
+	Port     string
+	Username string
+	Password string
+}
 
 // QuickConnectForm is the tab bar's quick-connect dialog. Nothing in it is
 // saved to the Vault: connecting opens an Unsaved Host Session.
@@ -60,6 +95,11 @@ type QuickConnectForm struct {
 	// NetworkDevice starts the temporary Session in network-device mode. It
 	// applies to plain SSH only.
 	NetworkDevice bool
+	// Jumps is the ad-hoc jump chain the Session dials before the target,
+	// ordered first = closest to the client. It applies to the SSH transports
+	// only and is never persisted; connecting copies it into the Session's
+	// start specification.
+	Jumps []QuickConnectJump
 }
 
 // quickConnectState is the tab bar's quick-connect dialog state, held on the UI
@@ -152,12 +192,15 @@ func (s *State) SetQuickConnectProtocol(protocol domainvault.Protocol) {
 	form.Protocol = protocol
 
 	// A transport, network-device mode, and the SSH password belong to SSH;
-	// another protocol has no control for them. The username stays because VNC
-	// has its own visible Username field.
+	// another protocol has no control for them. The jump chain goes too: only
+	// the SSH transports can carry one, so leaving SSH never lets a hidden
+	// chain reach a Telnet or VNC Session. The username stays because VNC has
+	// its own visible Username field.
 	if previous == domainvault.ProtocolSSH {
 		form.Transport = domainvault.TransportPlain
 		form.NetworkDevice = false
 		form.Password = ""
+		form.Jumps = nil
 	}
 	// Leaving VNC hides every VNC control.
 	if previous == domainvault.ProtocolVNC {
@@ -280,6 +323,119 @@ func (s *State) SetQuickConnectVNCWebSocket(enabled bool) {
 	form.VNCDisplay = ""
 }
 
+// WithQuickConnectJumpHosts supplies the Vault Hosts the quick-connect jump
+// chain may borrow. The resolver is consulted on every frame, so a Host
+// created or deleted while the dialog is open shows correctly. Without it the
+// saved-host picker is empty and only temporary jumps can be added.
+func WithQuickConnectJumpHosts(hosts func() []domainvault.Host) Option {
+	return func(s *State) {
+		if hosts != nil {
+			s.quickConnectJumpHosts = hosts
+		}
+	}
+}
+
+// QuickConnectJumpHosts lists the Vault Hosts a jump chain may borrow. It is
+// the resolver WithQuickConnectJumpHosts wires, or empty without one.
+func (s *State) QuickConnectJumpHosts() []domainvault.Host {
+	if s.quickConnectJumpHosts == nil {
+		return nil
+	}
+	hosts := s.quickConnectJumpHosts()
+	out := make([]domainvault.Host, 0, len(hosts))
+	for _, host := range hosts {
+		if host.Protocol != domainvault.ProtocolSSH {
+			continue
+		}
+		out = append(out, host)
+	}
+	return out
+}
+
+// QuickConnectAddSavedJump appends a Vault Host to the chain. A no-op with an
+// unknown ID: the menu only offers listed Hosts.
+func (s *State) QuickConnectAddSavedJump(id model.HostID) {
+	form := &s.quickConnect.form
+	for _, host := range s.QuickConnectJumpHosts() {
+		if host.ID != id {
+			continue
+		}
+		label := host.Label
+		if label == "" {
+			label = host.Hostname
+		}
+		form.Jumps = append(form.Jumps, QuickConnectJump{
+			Kind:   QuickConnectJumpSaved,
+			HostID: host.ID,
+			Label:  label,
+		})
+		s.RequestRedraw()
+		return
+	}
+}
+
+// QuickConnectAddTemporaryJump appends an empty temporary jump, whose endpoint
+// the user types inline. Its port starts at the SSH default.
+func (s *State) QuickConnectAddTemporaryJump() {
+	form := &s.quickConnect.form
+	form.Jumps = append(form.Jumps, QuickConnectJump{
+		Kind: QuickConnectJumpTemporary,
+		Port: defaultQuickConnectPort(domainvault.ProtocolSSH),
+	})
+	s.RequestRedraw()
+}
+
+// QuickConnectRemoveJump drops the jump at index.
+func (s *State) QuickConnectRemoveJump(index int) {
+	form := &s.quickConnect.form
+	if index < 0 || index >= len(form.Jumps) {
+		return
+	}
+	form.Jumps = append(form.Jumps[:index], form.Jumps[index+1:]...)
+	s.RequestRedraw()
+}
+
+// QuickConnectMoveJump moves the jump at index by delta (-1 closer to the
+// client, +1 closer to the target), clamped to the chain.
+func (s *State) QuickConnectMoveJump(index, delta int) {
+	form := &s.quickConnect.form
+	target := index + delta
+	if index < 0 || index >= len(form.Jumps) || target < 0 || target >= len(form.Jumps) {
+		return
+	}
+	form.Jumps[index], form.Jumps[target] = form.Jumps[target], form.Jumps[index]
+	s.RequestRedraw()
+}
+
+// quickConnectJumpPorts validates the chain's temporary endpoints and returns
+// them as start-specification jumps, ordered first = closest. A saved jump
+// needs no validation: the Vault record carries its endpoint.
+func quickConnectJumpPorts(jumps []QuickConnectJump) ([]appsession.Jump, bool) {
+	out := make([]appsession.Jump, 0, len(jumps))
+	for _, jump := range jumps {
+		if jump.Kind == QuickConnectJumpSaved {
+			out = append(out, appsession.Jump{HostID: jump.HostID, Label: jump.Label})
+			continue
+		}
+		hostname := strings.TrimSpace(jump.Hostname)
+		if hostname == "" {
+			return nil, false
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(jump.Port))
+		if err != nil || port < 1 || port > 65535 {
+			return nil, false
+		}
+		out = append(out, appsession.Jump{
+			Label:    hostname,
+			Hostname: hostname,
+			Port:     port,
+			Username: strings.TrimSpace(jump.Username),
+			Password: jump.Password,
+		})
+	}
+	return out, true
+}
+
 // RequestQuickConnectClose closes an empty form at once. A form with any typed
 // detail first asks to discard it, because an outside click or Escape must not
 // lose a partly filled form.
@@ -360,6 +516,28 @@ func (s *State) ConnectQuickConnect() error {
 		}
 		port = typed
 	}
+	// A jump chain belongs to the SSH transports only. Mosh's UDP flow cannot
+	// carry one, so the form refuses to connect instead of silently dropping
+	// the chain or leaving the Session to fail later.
+	if len(form.Jumps) > 0 {
+		if protocol != domainvault.ProtocolSSH {
+			form.Jumps = nil
+		} else if domainvault.NormalizeTransport(protocol, form.Transport) == domainvault.TransportMosh {
+			s.quickConnect.issue = QuickConnectIssueJumpTransport
+			s.RequestRedraw()
+			return nil
+		}
+	}
+	var specJumps []appsession.Jump
+	if len(form.Jumps) > 0 && protocol == domainvault.ProtocolSSH {
+		resolved, ok := quickConnectJumpPorts(form.Jumps)
+		if !ok {
+			s.quickConnect.issue = QuickConnectIssueJump
+			s.RequestRedraw()
+			return nil
+		}
+		specJumps = resolved
+	}
 	s.quickConnect.issue = QuickConnectIssueNone
 
 	username := strings.TrimSpace(form.Username)
@@ -408,7 +586,7 @@ func (s *State) ConnectQuickConnect() error {
 		}
 	}
 
-	if err := s.openHostWithPassword(host, StartupInput{}, false, password); err != nil {
+	if err := s.openHostWithPassword(host, StartupInput{}, false, password, specJumps...); err != nil {
 		if errors.Is(err, ErrNoSessions) {
 			s.quickConnect.issue = QuickConnectIssueNoSessions
 		}
@@ -421,11 +599,12 @@ func (s *State) ConnectQuickConnect() error {
 
 // untouched reports whether the form still holds only its opening defaults, so
 // closing it loses nothing worth confirming. Switching protocol on its default
-// port leaves nothing to discard, so the protocol itself does not count.
+// port leaves nothing to discard, so the protocol itself does not count. A jump
+// chain is typed detail worth confirming even when its endpoints are empty.
 func (f QuickConnectForm) untouched() bool {
 	return f.Hostname == "" && f.Port == defaultQuickConnectPort(f.Protocol) &&
 		f.Username == "" && f.Password == "" && !f.NetworkDevice &&
-		f.Transport == domainvault.TransportPlain &&
+		f.Transport == domainvault.TransportPlain && len(f.Jumps) == 0 &&
 		f.VNCPassword == "" && !f.VNCWebSocket &&
 		f.VNCWebSocketPath == "" && !f.VNCWebSocketSecure &&
 		domainvault.NormalizeDisplayMode(f.VNCMode) == domainvault.VNCDisplayNumber &&

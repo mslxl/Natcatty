@@ -865,13 +865,17 @@ func acceptedKnownHosts(keys []domainconn.Key) []domainconn.KnownHost {
 	return records
 }
 
-// requestForHop turns a jump Hop into the Request an AuthSource consumes.
+// requestForHop turns a jump Hop into the Request an AuthSource consumes. A
+// one-shot password belongs to a jump with no saved Host, so it travels into
+// the request: authPlan offers it directly, and no credential source is
+// consulted for such a jump.
 func requestForHop(hop Hop) Request {
 	return Request{
 		HostID:   hop.HostID,
 		Hostname: hop.Hostname,
 		Port:     hop.Port,
 		Username: hop.Username,
+		Password: hop.Password,
 	}
 }
 

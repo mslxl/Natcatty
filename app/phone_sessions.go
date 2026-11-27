@@ -347,16 +347,21 @@ func newPhoneSessionRuntimeWithDialer(dialer appconnection.Dialer, vault *appvau
 		)
 	}
 	connections := appconnection.NewManager(dialer, vaultPasswords{vault: vault}, known, options...)
-	routes := vaultRoutes{vault: vault, preferences: preferences}
+	var terminalSource terminalSettingsSource
+	if terminalSettings != nil {
+		terminalSource = terminalSettingsFunc(terminalSettings)
+	}
+	routes := vaultRoutes{vault: vault, preferences: preferences, terminalSettings: terminalSource}
 	forwarding := newPhoneForwarding(known, vault, routes, connections, true)
 	// The shared transfer service opens SFTP/SCP with the same route resolver
 	// and Connection pool a Session uses. The local opener reads the system
 	// picker's app-readable copies for a device upload; there is no local
 	// browsing pane.
 	files := apptransfer.NewService(adaptersftp.NewLocal(), &sftpRemoteOpener{
-		manager: connections,
-		routes:  routes,
-		vault:   vault,
+		manager:          connections,
+		routes:           routes,
+		vault:            vault,
+		terminalSettings: terminalSource,
 	})
 	// The queue is the desktop's scheduler, checkpoint, and conflict machinery.
 	// Its history lives in the phone's user-data directory, the same place the
