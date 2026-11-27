@@ -916,6 +916,62 @@ func TestPaneKeepsAFullScreenProgramsWholeScreen(t *testing.T) {
 	}
 }
 
+// procps top is a full-screen program that stays on the main screen: it clears
+// and repaints that screen instead of taking the alternate screen, which
+// Darwin's top and vim do. The shell's prompt row then names a line top has
+// overwritten. Cropping there kept only the rows below it, so top's summary and
+// column headers were not drawn at all and the pane looked blank above the rows
+// that survived — over SSH to a Linux Host, where top is procps'.
+func TestPaneKeepsAMainScreenProgramsWholeScreen(t *testing.T) {
+	term, err := terminal.New(terminal.Options{Conn: newNopConn(), Scrollback: 64 << 10})
+	if err != nil {
+		t.Skipf("the terminal plugin is unavailable here: %v", err)
+	}
+	t.Cleanup(func() { _ = term.Close() })
+	term.Resize(40, 10)
+	term.Feed([]byte("old-00\r\nold-01\r\nold-02\r\nold-03\r\nold-04\r\nold-05\r\nPROMPT> top\r\n"))
+	// The prompt sits low on the screen, so a crop at its row hides almost
+	// everything top draws.
+	promptRow := screenRowContaining(t, term, Size{Cols: 40, Rows: 10}, "PROMPT> top")
+	// top clears the main screen and paints it from the first row. No trailing
+	// newline: procps positions its last row with cursor addressing, so the
+	// screen does not scroll.
+	var painted strings.Builder
+	painted.WriteString("\x1b[H\x1b[2J")
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			painted.WriteString("\r\n")
+		}
+		fmt.Fprintf(&painted, "top row %d", i)
+	}
+	term.Feed([]byte(painted.String()))
+
+	eng := lens.NewEngine()
+	store := model.NewStore(eng)
+	eng.Attach(store)
+	var scroll ui.ScrollState
+	var follow Follow
+	tester := ui.NewTester(func(c *ui.Context) {
+		Pane(c, store, eng, term, Size{Cols: 40, Rows: 10}, nil, &scroll, &follow,
+			nil, Bell{Col: -1, Row: -1},
+			Tail{Running: "top", PromptRow: promptRow, PromptRowKnown: true, ScreenCleared: true},
+			Cursor{}, nil, Hooks{}, func(string) {})
+	}, 900, 300)
+	for i := 0; i < 3; i++ {
+		tester.Frame()
+	}
+
+	texts := strings.Join(tester.Texts(), "\n")
+	for _, want := range []string{"top row 0", "top row 9"} {
+		if !strings.Contains(texts, want) {
+			t.Fatalf("the main-screen program's row %q is missing: %q", want, texts)
+		}
+	}
+	if strings.Index(texts, "top row 0") > strings.Index(texts, "top row 9") {
+		t.Fatalf("the program's rows are not in screen order: %q", texts)
+	}
+}
+
 // Mouse reports carry screen coordinates. With the live area cropped to the
 // prompt row, a full-screen program's clicks named rows shifted by the
 // scrollback above the screen.

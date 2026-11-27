@@ -845,6 +845,7 @@ func (s *Surface) terminalViewInert(c *ui.Context) ui.Element {
 		PromptRowKnown:     promptRowKnown,
 		PromptAfterCommand: s.flow.promptBoundaryAfterCommand(),
 		PromptPending:      s.flow.promptBoundaryPending(),
+		ScreenCleared:      s.flow.screenCleared(),
 	}
 	for _, block := range s.flow.store.Snapshot() {
 		if block.Exited {
@@ -1347,6 +1348,7 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			PromptRowKnown:     promptRowKnown,
 			PromptAfterCommand: s.flow.promptBoundaryAfterCommand(),
 			PromptPending:      s.flow.promptBoundaryPending(),
+			ScreenCleared:      s.flow.screenCleared(),
 		}
 		for _, block := range blocks {
 			if block.Exited {

@@ -309,6 +309,16 @@ func (s *terminalFlow) promptBoundary(size appview.Size) (int, bool) {
 	return s.promptRow, true
 }
 
+// screenCleared reports whether the running command cleared the main screen.
+// The Pane then draws the screen from its first row, not from the shell's
+// prompt row, which a main-screen TUI (procps top) has overwritten.
+func (s *terminalFlow) screenCleared() bool {
+	if s == nil || s.tap == nil {
+		return false
+	}
+	return s.tap.ScreenCleared()
+}
+
 func (s *terminalFlow) promptBoundaryAfterCommand() bool {
 	if s == nil {
 		return false

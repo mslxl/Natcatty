@@ -247,6 +247,13 @@ func (f *phoneLensFlow) promptFollowsCommand() bool {
 	return f.promptAfter
 }
 
+// screenCleared reports whether the running command cleared the main screen.
+// The Pane then draws the screen from its first row, not from the shell's
+// prompt row, which a main-screen TUI (procps top) has overwritten.
+func (f *phoneLensFlow) screenCleared() bool {
+	return f != nil && f.tap != nil && f.tap.ScreenCleared()
+}
+
 // running reports whether a command's output is still streaming.
 func (f *phoneLensFlow) running() bool {
 	return f != nil && f.store.HasRunning()
