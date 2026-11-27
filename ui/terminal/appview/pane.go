@@ -661,6 +661,18 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 		// whole replay.
 		from = 0
 		bell.Col, bell.Row = -1, -1
+	} else if tail.Running != "" && tail.ScreenCleared && frame.sc != nil {
+		// A full-screen program that stays on the main screen (procps top)
+		// clears and repaints it in place. The shell's prompt row then names a
+		// line the program has overwritten, and cropping there left only the
+		// rows below it: the top of the program's screen — its summary and
+		// column headers — vanished, and the pane looked blank above the few
+		// surviving rows. The program owns the screen from its first row, so
+		// the live area starts there; the rows above it in the replay are the
+		// scrollback from before the clear.
+		if from = frame.sc.top; from >= len(frame.Lines) {
+			from = 0
+		}
 	}
 	lines, cursorRow := frame.Lines[from:], frame.CursorRow-from
 	// A mirror/visible desync (a clear-screen, a replay) can put the cursor
@@ -1207,6 +1219,12 @@ type Tail struct {
 	// block it has just entered, so the live area is cropped at the cursor
 	// until the shell draws the next prompt.
 	PromptPending bool
+	// ScreenCleared is true when the running command cleared the main screen:
+	// procps top does not take the alternate screen, it clears and repaints the
+	// main one every refresh. PromptRow no longer names the prompt there (the
+	// program overwrote it), so the live area must start at the screen's own
+	// first row or it shows only the rows below the stale prompt row.
+	ScreenCleared bool
 }
 
 // tailFrom is the first screen row the live area shows: the prompt line when idle,

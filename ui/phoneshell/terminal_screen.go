@@ -222,7 +222,7 @@ func (s *ghosttyScreen) lensPane(c *ui.Context) ui.Element {
 	size := appview.Size{Cols: cols, Rows: rows}
 	s.flow.setSize(cols, rows)
 	blocks := s.flow.store.Snapshot()
-	tail := appview.Tail{}
+	tail := appview.Tail{ScreenCleared: s.flow.screenCleared()}
 	if row, known := s.flow.promptBoundary(); known {
 		tail.PromptRow, tail.PromptRowKnown = row, true
 		tail.PromptAfterCommand = s.flow.promptFollowsCommand()

@@ -62,6 +62,13 @@ type Tap struct {
 	// program quits, so the tap ignores the painting in between instead of
 	// keeping a monochrome copy of the TUI in the block.
 	alt bool
+	// tookOver records that the running command cleared the main screen
+	// (CSI 2 J or 3 J). procps top is the important case: unlike Darwin's top
+	// and vim it does not take the alternate screen, it clears and repaints the
+	// main one. The Pane must then draw the screen from its own first row, not
+	// from the shell's prompt row, which the program has overwritten. Atomic
+	// because the UI thread reads it while the reader feeds the tap.
+	tookOver atomic.Bool
 	// Netcatty's session hook reports the exact typed command and cwd in a
 	// private OSC 1337 marker immediately before the standard OSC 133;C mark.
 	// Keeping it here lets the Terminal lens path work with Natcatty's existing
@@ -195,6 +202,13 @@ func (t *Tap) drain() {
 // too, and that one is not a bell, so only the ground state counts.
 func (t *Tap) Bells() int64 { return t.bells.Load() }
 
+// ScreenCleared reports whether the command running now has cleared the main
+// screen. The Pane then shows the screen from its first row rather than
+// cropping at the shell's prompt row: a main-screen TUI (procps top) repaints
+// over the prompt, and a prompt row that still names a line of its screen kept
+// only the rows below it, leaving the top of the program's own screen blank.
+func (t *Tap) ScreenCleared() bool { return t.tookOver.Load() }
+
 // applyCSI follows the cursor operations a program uses to draw its rows without
 // line feeds (PowerShell's formatting does), and the erases it uses to redraw.
 func (t *Tap) applyCSI(final byte) {
@@ -254,8 +268,15 @@ func (t *Tap) applyCSI(final byte) {
 	case 'K':
 		r.eraseLine()
 	case 'J':
-		if arg(0, 1) == 2 {
+		v := arg(0, 1)
+		if v == 2 {
 			r.eraseDisplay()
+		}
+		if v == 2 || v == 3 {
+			// The command owns the main screen now; the Pane draws it from
+			// its first row instead of cropping at the shell's prompt (see
+			// ScreenCleared).
+			t.tookOver.Store(true)
 		}
 	case 'm':
 		r.style[r.curR] = append(r.style[r.curR], 0x1b, '[')
@@ -452,6 +473,7 @@ func (t *Tap) dispatchOSC() {
 			t.ansi = t.ansi[:0]
 			t.col = 0
 			t.alt = false
+			t.tookOver.Store(false)
 			_ = shell
 		}
 		if cwd, typed, ok := parseNetcattyExec(rest); ok {
@@ -480,6 +502,9 @@ func (t *Tap) dispatchOSC() {
 			}
 			t.inCommand = true
 			t.alt = false
+			// A new command starts on the screen the shell left behind; its
+			// first clear is what asks the Pane to show the whole screen.
+			t.tookOver.Store(false)
 			// A fresh scratch screen; the prompt and the echoed command are not output.
 			t.rowsModel = newRowsH(t.screen().cols, captureRows)
 			t.rowsOut = t.rowsOut[:0]
@@ -504,6 +529,7 @@ func (t *Tap) dispatchOSC() {
 				// Terminal does the same — "Enter on an empty prompt moves the bar and
 				// the cursor to the next prompt at once" (changelog 884).
 				t.inCommand = false
+				t.tookOver.Store(false)
 				t.line = t.line[:0]
 				t.ansi = t.ansi[:0]
 				t.col = 0
@@ -523,6 +549,7 @@ func (t *Tap) dispatchOSC() {
 			}
 			t.flushLine()
 			t.inCommand = false
+			t.tookOver.Store(false)
 			t.store.End(status)
 		}
 	case "7":
