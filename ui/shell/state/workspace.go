@@ -2724,7 +2724,7 @@ func (s *State) requestPaneOpen(tabID model.TabID, paneID model.PaneID,
 	}
 	ctx := s.ctx
 	go func() {
-		session, err := s.openDescriptor(ctx, descriptor)
+		session, err := s.openDescriptor(ctx, descriptor, paneID)
 		s.mu.Lock()
 		s.paneOutcomes = append(s.paneOutcomes, paneOutcome{
 			tabID: tabID, paneID: paneID, session: session, restore: restore, err: err,
@@ -2756,7 +2756,7 @@ func (s *State) RetryPane(tabID model.TabID, paneID model.PaneID) bool {
 		return false
 	}
 	if value.session != nil {
-		s.closePane(value, false)
+		s.closePaneSession(value, false)
 		value.session = nil
 	}
 	value.pending = true
@@ -2802,7 +2802,7 @@ func (s *State) ReconnectPane(tabID model.TabID, paneID model.PaneID) bool {
 		// abandon a connection that is still recovering.
 		return false
 	}
-	s.closePane(value, false)
+	s.closePaneSession(value, false)
 	value.session = nil
 	value.surface = nil
 	value.pending = true
@@ -2880,8 +2880,12 @@ func remoteDirEligible(dir string) bool {
 	}
 }
 
+// openDescriptor reopens a Pane's Session from its own descriptor: restore at
+// startup, Retry after a failed dial, and Reconnect after a permanent stop.
+// paneID locates the Quick Connect credential the in-memory store keeps for an
+// Unsaved Host; it is empty for a pane that has no such credential.
 func (s *State) openDescriptor(ctx context.Context,
-	descriptor domainworkspace.SessionDescriptor) (*appsession.Session, error) {
+	descriptor domainworkspace.SessionDescriptor, paneID model.PaneID) (*appsession.Session, error) {
 	if s.sessions == nil {
 		return nil, ErrNoSessions
 	}
@@ -2891,6 +2895,14 @@ func (s *State) openDescriptor(ctx context.Context,
 		X11Forwarding:  descriptor.X11Forwarding,
 		AutoAttachTmux: descriptor.AutoAttachTmux,
 		ResumeKey:      descriptor.ResumeKey,
+	}
+	// An Unsaved Host (Quick Connect) carries no HostID, so there is no Vault
+	// record to resolve. Its one-shot password was stored encrypted in memory
+	// when the Pane opened, and only lives until the Pane closes.
+	if descriptor.HostID == "" {
+		if password, ok := s.paneCredentials.Get(string(paneID)); ok {
+			spec.Password = password
+		}
 	}
 	switch descriptor.Kind {
 	case domainworkspace.SessionLocal:
@@ -2913,7 +2925,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		spec.Hostname = descriptor.Hostname
 		spec.Port = descriptor.Port
 		spec.Username = descriptor.Username
-		if s.resolveHost != nil {
+		if s.resolveHost != nil && descriptor.HostID != "" {
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
 				return nil, ErrHostUnavailable
@@ -2946,7 +2958,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		// tmux never applies to Mosh or ET, even if a restored descriptor from
 		// an older record carries the flag.
 		spec.AutoAttachTmux = false
-		if s.resolveHost != nil {
+		if s.resolveHost != nil && descriptor.HostID != "" {
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
 				return nil, ErrHostUnavailable
@@ -2986,7 +2998,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		spec.Port = descriptor.Port
 		spec.Username = descriptor.Username
 		spec.X11Forwarding = false
-		if s.resolveHost != nil {
+		if s.resolveHost != nil && descriptor.HostID != "" {
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
 				return nil, ErrHostUnavailable
@@ -3006,11 +3018,13 @@ func (s *State) openDescriptor(ctx context.Context,
 		// dropped socket automatically.
 		spec.Reconnect = appsession.TelnetReconnectPolicy()
 		// The descriptor still names the Host, so the resolver can read its
-		// saved login even when the Vault lookup above found nothing new.
+		// saved login even when the Vault lookup above found nothing new. An
+		// Unsaved Host has no saved login; its one-shot password, when the
+		// Quick Connect form collected one, is already on the spec.
 		s.attachAutoLogin(ctx, &spec, domainvault.Host{
 			ID: descriptor.HostID, Hostname: spec.Hostname,
 			Port: spec.Port, Username: spec.Username,
-		}, "")
+		}, spec.Password)
 	case domainworkspace.SessionVNC:
 		spec.Kind = appsession.KindVNC
 		spec.HostID = descriptor.HostID
@@ -3020,7 +3034,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		spec.VNCScreen = descriptor.Screen
 		spec.X11Forwarding = false
 		spec.AutoAttachTmux = false
-		if s.resolveHost != nil {
+		if s.resolveHost != nil && descriptor.HostID != "" {
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
 				return nil, ErrHostUnavailable
@@ -3181,6 +3195,15 @@ func (s *State) closeTab(tab *Tab, preserve bool) {
 }
 
 func (s *State) closePane(value *pane, preserve bool) {
+	s.closePaneSession(value, preserve)
+	s.dropPaneCredential(value)
+}
+
+// closePaneSession ends the Pane's Surface and Session. It runs both at real
+// teardown (closePane) and inside RetryPane and ReconnectPane, which recycle
+// the Session before redialing, so it never touches the in-memory credential:
+// the credential is dropped only when the Pane itself leaves the layout.
+func (s *State) closePaneSession(value *pane, preserve bool) {
 	if value == nil {
 		return
 	}
@@ -3204,6 +3227,16 @@ func (s *State) closePane(value *pane, preserve bool) {
 	if !preserve && value.descriptor.Kind == domainworkspace.SessionET {
 		_ = s.discardETResume(value.descriptor.ResumeKey)
 	}
+}
+
+// dropPaneCredential forgets the Quick Connect one-shot password the in-memory
+// store holds for this Pane. It runs when the Pane leaves the layout for good;
+// a retry keeps the credential so the redial can offer it again.
+func (s *State) dropPaneCredential(value *pane) {
+	if value == nil || s.paneCredentials == nil {
+		return
+	}
+	s.paneCredentials.Drop(string(value.ID))
 }
 
 // removeTabAt removes the Tab at index and keeps the active index valid. It

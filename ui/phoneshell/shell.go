@@ -21,6 +21,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appapplock "github.com/mslxl/natcatty/application/applock"
+	appsession "github.com/mslxl/natcatty/application/session"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainmodel "github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -308,6 +309,11 @@ func New(opts ...Option) *Shell {
 
 		proxyCommand: platformProxyCommandCapability(),
 		hostBrowsers: make(map[string]*browserSurface),
+	}
+	// A failed key generation must not prevent the shell from starting: the
+	// only loss is that a Quick Connect reopen cannot reuse the password.
+	if credentials, err := appsession.NewMemCredentialStore(); err == nil {
+		s.sessions.credentials = credentials
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -1163,8 +1169,15 @@ func (s *Shell) launchPane(tabID, paneID string) {
 		return
 	}
 	host, resumeKey := pane.host, pane.resumeKey
-	unsaved, secret, startup := pane.unsaved, pane.unsavedSecret, pane.startup
+	unsaved, hasSecret, startup := pane.unsaved, pane.unsavedSecret, pane.startup
+	credentials := s.sessions.credentials
 	s.sessions.mu.Unlock()
+	secret := ""
+	if hasSecret {
+		// The one-shot password is sealed in memory under the Pane's identity;
+		// the struct itself never carries plaintext.
+		secret, _ = credentials.Get(paneID)
+	}
 	ctx, cancel := context.WithCancel(withPromptOwner(context.Background(), paneID))
 	s.sessions.attachCancel(tabID, paneID, cancel)
 	go func() {

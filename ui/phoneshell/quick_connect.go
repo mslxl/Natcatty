@@ -197,7 +197,8 @@ func (s *Shell) connectQuickConnect() {
 	}
 	host := quickConnectHost(target, form.networkDevice)
 	// The draft, including the one-shot credential, is discarded as soon as
-	// the open starts; only the Pane's unpersisted field carries the secret.
+	// the open starts; only the encrypted in-memory store keeps it, sealed
+	// under the new Pane's identity and dropped when the Pane closes.
 	s.sessions.quickConnect = quickConnectState{}
 	s.openQuickConnectTarget(host, secret)
 }

@@ -6,6 +6,11 @@
 - Keep code readable; do not sacrifice clarity for overly compressed or "clever" shortcuts.
 - Avoid unnecessary layers of indirection.
 
+## Cross-platform parity
+
+- All work is cross-platform by default: a change to the desktop shell must consider the phone shell, and vice versa. When you touch behavior one side has, check the other side and align it in the same change. Share the implementation rather than duplicating it.
+- In-memory credentials are never held as plaintext. Use the shared encrypted store (`appsession.MemCredentialStore`, AES-256-GCM sealed under a random per-run key) rather than a plaintext field, and drop entries when their owner (Pane, Session) closes.
+
 ## Testing
 
 - Run UI and application tests headlessly with MyGo's headless tester (`ui.NewTester` via `go test`); do not launch a foreground GUI window to run tests.
