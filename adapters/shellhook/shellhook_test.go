@@ -785,14 +785,24 @@ func TestScriptsGuardAgainstExistingIntegrations(t *testing.T) {
 	for name, script := range scripts {
 		guards := []string{
 			"NETCATTY_HOOK",
-			"ATUIN_SESSION",
-			"STARSHIP_SHELL",
-			"STARSHIP_SESSION_KEY",
 			"ITERM_SHELL_INTEGRATION_INSTALLED",
 		}
 		for _, guard := range guards {
 			if !strings.Contains(script, guard) {
 				t.Fatalf("%s does not check %s", name, guard)
+			}
+		}
+	}
+	// Atuin and Starship are checked but not skipped: they draw the prompt and
+	// keep their own state, yet neither reports the command line on the start
+	// mark, so a terminal reading only the mark never learns what ran. The hook
+	// has to install beside them; skipping on their presence left every command
+	// unclaimed on a shell that loads either (a picture printed its bytes as
+	// text, with no toolbar on its block).
+	for name, script := range scripts {
+		for _, tool := range []string{"ATUIN_SESSION", "STARSHIP_SHELL"} {
+			if !strings.Contains(script, tool) {
+				t.Fatalf("%s does not mention %s", name, tool)
 			}
 		}
 	}
