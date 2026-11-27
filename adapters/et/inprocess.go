@@ -51,6 +51,15 @@ type RouteSource interface {
 	Route(ctx context.Context, id model.HostID) (appconnection.Route, error)
 }
 
+// JumpResolver is the optional RouteSource capability that resolves one
+// ad-hoc Session jump to a connection hop: a saved jump through its Vault
+// Host, a temporary jump from the endpoint the caller typed. A Session
+// carrying jumps opened on a source without the capability fails closed
+// instead of silently dropping the chain.
+type JumpResolver interface {
+	ResolveJump(ctx context.Context, jump appsession.Jump) (appconnection.Hop, error)
+}
+
 // ConnectionLease is the slice of connection.Lease the in-process client
 // needs. *appconnection.Lease implements it; tests provide a fake.
 type ConnectionLease interface {
@@ -123,6 +132,10 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	}
 
 	route, err := f.route(ctx, spec.HostID)
+	if err != nil {
+		return nil, err
+	}
+	route, err = f.mergeJumps(ctx, spec, route)
 	if err != nil {
 		return nil, err
 	}
@@ -320,6 +333,29 @@ func (f InProcessFactory) route(ctx context.Context, id model.HostID) (appconnec
 		return appconnection.Route{}, nil
 	}
 	return f.Routes.Route(ctx, id)
+}
+
+// mergeJumps prepends the Session's ad-hoc jump chain to the route the Vault
+// resolved, so the ad-hoc chain's first hop is closest to the client. A
+// chained Session on a route source that cannot resolve jumps fails closed.
+func (f InProcessFactory) mergeJumps(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (appconnection.Route, error) {
+	if len(spec.Jumps) == 0 {
+		return route, nil
+	}
+	resolver, ok := f.Routes.(JumpResolver)
+	if !ok {
+		return appconnection.Route{}, fmt.Errorf("%w: this build cannot resolve ad-hoc jump Hosts", etmodel.ErrInvalidConfig)
+	}
+	hops := make([]appconnection.Hop, 0, len(spec.Jumps)+len(route.Jumps))
+	for _, jump := range spec.Jumps {
+		hop, err := resolver.ResolveJump(ctx, jump)
+		if err != nil {
+			return appconnection.Route{}, err
+		}
+		hops = append(hops, hop)
+	}
+	route.Jumps = append(hops, route.Jumps...)
+	return route, nil
 }
 
 // acquire takes the lease that carries both the bootstrap exec and the ET

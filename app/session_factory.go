@@ -55,6 +55,40 @@ type routeSource interface {
 	Route(ctx context.Context, id model.HostID) (appconnection.Route, error)
 }
 
+// jumpResolver resolves one Session jump to a connection Hop: a saved jump
+// through its Vault Host, a temporary jump from the endpoint the caller
+// typed. vaultRoutes implements it; a route source that does not fails a
+// Session carrying jumps closed instead of silently dropping the chain.
+type jumpResolver interface {
+	ResolveJump(ctx context.Context, jump appsession.Jump) (appconnection.Hop, error)
+}
+
+// mergeSpecJumps prepends the Session's ad-hoc jump chain to the route the
+// Vault resolved, so the ad-hoc chain's first hop is closest to the client.
+// One ad-hoc chain runs before one saved chain; there is no use for a saved
+// Host record to jump through its own saved chain before the ad-hoc hops the
+// caller chose. Temporary jumps carry their one-shot credentials through the
+// resolver; without one, a chained Session fails closed.
+func mergeSpecJumps(ctx context.Context, routes routeSource, spec appsession.StartSpec, route appconnection.Route) (appconnection.Route, error) {
+	if len(spec.Jumps) == 0 {
+		return route, nil
+	}
+	resolver, ok := routes.(jumpResolver)
+	if !ok {
+		return appconnection.Route{}, routeError(errors.New("app: this build cannot resolve ad-hoc jump Hosts"))
+	}
+	hops := make([]appconnection.Hop, 0, len(spec.Jumps)+len(route.Jumps))
+	for _, jump := range spec.Jumps {
+		hop, err := resolver.ResolveJump(ctx, jump)
+		if err != nil {
+			return appconnection.Route{}, err
+		}
+		hops = append(hops, hop)
+	}
+	route.Jumps = append(hops, route.Jumps...)
+	return route, nil
+}
+
 // preferenceSource reads the persisted preferences. The preferences service
 // implements it; the Mosh prediction display is the only setting the factory
 // copies into a Session.
@@ -68,6 +102,12 @@ type preferenceSource interface {
 type terminalSettingsSource interface {
 	Settings() domainterminal.Settings
 }
+
+// terminalSettingsFunc adapts a settings reader to the source seam. The phone
+// runtime receives the reader as a function rather than a service.
+type terminalSettingsFunc func() domainterminal.Settings
+
+func (f terminalSettingsFunc) Settings() domainterminal.Settings { return f() }
 
 // transportFactory routes a Session to the local PTY adapter, the serial
 // adapter, the Telnet adapter, or an SSH Connection. The SSH path acquires a
@@ -221,16 +261,26 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 	var route appconnection.Route
 	switch {
 	case spec.HostID == "":
-		// An Unsaved Host has no saved backing, so there is no jump chain,
-		// proxy, or Network Profile to resolve. Its only algorithm setting is
-		// the terminal-wide legacy opt-in.
-		route = f.unsavedHostRoute()
+		// An Unsaved Host has no saved backing, so it has no saved jump chain
+		// or Network Profile to resolve; an ad-hoc chain arrives on the
+		// StartSpec itself. It still resolves through the route source, so the
+		// app-wide default proxy applies exactly as it does for a saved Host;
+		// the terminal-wide legacy opt-in is its only algorithm setting.
+		resolved, err := f.unsavedHostRoute(ctx)
+		if err != nil {
+			return nil, err
+		}
+		route = resolved
 	case f.routes != nil:
 		resolved, err := f.routes.Route(ctx, spec.HostID)
 		if err != nil {
 			return nil, err
 		}
 		route = resolved
+	}
+	route, err := mergeSpecJumps(ctx, f.routes, spec, route)
+	if err != nil {
+		return nil, err
 	}
 
 	lease, terminal, notices, attached, hookExpected, hookWithdrawn, err := f.acquireTerminal(ctx, spec, route)
@@ -891,6 +941,9 @@ type vaultRoutes struct {
 	// preferences supplies the app-wide default proxy. It is optional so a
 	// test or MCP caller without global preferences keeps the Host's route.
 	preferences preferenceSource
+	// terminalSettings supplies the terminal-wide legacy-algorithm opt-in a
+	// target with no saved Host uses. A nil source leaves the opt-in off.
+	terminalSettings terminalSettingsSource
 }
 
 func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
@@ -951,10 +1004,68 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	return route, nil
 }
 
-// routeWithoutHost resolves the route of a target that has no saved Host. Only
-// the app-wide default proxy applies: there is no chain, Host proxy, or
-// Network Profile to read, and a default profile deleted since the preference
-// was written restores a direct connection.
+// ResolveJump maps one Session jump onto the connection hop its chain dials.
+// A saved jump borrows the Vault Host's endpoint, credentials, and algorithm
+// policy, exactly as a hop of that Host's saved chain would. A temporary jump
+// is the endpoint the user typed for this Session alone: its one-shot password
+// travels with the hop into memory-only authentication, and the terminal-wide
+// legacy-algorithm opt-in is the only policy it can carry. Its fingerprint
+// digests the endpoint and credential selection without the secret itself.
+func (r vaultRoutes) ResolveJump(ctx context.Context, jump appsession.Jump) (appconnection.Hop, error) {
+	if jump.HostID == "" {
+		if jump.Hostname == "" {
+			return appconnection.Hop{}, routeError(errors.New("app: a temporary jump Host has no hostname"))
+		}
+		host := domainvault.Host{
+			Hostname: jump.Hostname,
+			Port:     jump.Port,
+			Username: jump.Username,
+		}
+		if r.terminalSettings != nil {
+			host.LegacyAlgorithms = r.terminalSettings.Settings().LegacyAlgorithms
+		}
+		material := "one-shot"
+		if jump.Password == "" {
+			material = ""
+		}
+		return appconnection.Hop{
+			Label:             jump.Label,
+			Hostname:          jump.Hostname,
+			Port:              jump.Port,
+			Username:          jump.Username,
+			Password:          jump.Password,
+			Algorithms:        algorithmPolicy(host),
+			ConfigFingerprint: configFingerprint(host, material),
+		}, nil
+	}
+	if r.vault == nil {
+		return appconnection.Hop{}, routeError(errors.New("app: no Vault for jump Host resolution"))
+	}
+	host, err := r.vault.Get(ctx, jump.HostID)
+	if err != nil {
+		return appconnection.Hop{}, routeError(fmt.Errorf("jump Host %s: %w", jump.HostID, err))
+	}
+	label := jump.Label
+	if label == "" {
+		label = host.Label
+	}
+	return appconnection.Hop{
+		HostID:            host.ID,
+		Label:             label,
+		Hostname:          host.Hostname,
+		Port:              host.Port,
+		Username:          host.Username,
+		Algorithms:        algorithmPolicy(host),
+		ConfigFingerprint: r.configFingerprint(ctx, host),
+	}, nil
+}
+
+// routeWithoutHost resolves the route of a target that has no saved Host. It
+// goes through the same proxy resolution as a saved Host, so the app-wide
+// default still applies; there is no chain, Host proxy, or Network Profile to
+// read, and a default profile deleted since the preference was written
+// restores a direct connection. The terminal-wide legacy-algorithm opt-in is
+// the only algorithm policy such a target can carry.
 func (r vaultRoutes) routeWithoutHost(ctx context.Context) (appconnection.Route, error) {
 	// An empty Host selects no Host or Group proxy, so resolveProxy falls
 	// through to the app-wide default.
@@ -962,7 +1073,9 @@ func (r vaultRoutes) routeWithoutHost(ctx context.Context) (appconnection.Route,
 	if err != nil {
 		return appconnection.Route{}, err
 	}
-	return appconnection.Route{Proxy: proxy}, nil
+	route := unsavedAlgorithmRoute(r.terminalSettings)
+	route.Proxy = proxy
+	return route, nil
 }
 
 // NetworkProfileIDForHost resolves only the Network Profile a Session's first
@@ -1172,15 +1285,26 @@ func (r vaultRoutes) proxy(ctx context.Context, host domainvault.Host) (*appconn
 	return proxy, nil
 }
 
-// unsavedHostRoute is the route for an Unsaved Host. It has no Vault record,
-// so it carries no jump chain, proxy, or Network Profile; the terminal-wide
-// opt-in is the only algorithm setting it can have. The config fingerprint
-// includes that opt-in so changing it never reuses a parked transport built
-// with the other policy.
-func (f *transportFactory) unsavedHostRoute() appconnection.Route {
+// unsavedHostRoute resolves the route of a target with no saved Host through
+// the same route source a saved Host uses. No jump chain or Network Profile
+// exists without a Host record, but the app-wide default proxy applies. The
+// fallback keeps a caller that supplies no route source working with the
+// terminal-wide algorithm policy alone.
+func (f *transportFactory) unsavedHostRoute(ctx context.Context) (appconnection.Route, error) {
+	if f.routes != nil {
+		return f.routes.Route(ctx, "")
+	}
+	return unsavedAlgorithmRoute(f.terminalSettings), nil
+}
+
+// unsavedAlgorithmRoute is the algorithm half of an Unsaved Host's route: it
+// has no Vault record, so the terminal-wide opt-in is the only policy it can
+// carry. The fingerprint includes that opt-in so changing it never reuses a
+// transport built with the other policy.
+func unsavedAlgorithmRoute(settings terminalSettingsSource) appconnection.Route {
 	legacy := false
-	if f.terminalSettings != nil {
-		legacy = f.terminalSettings.Settings().LegacyAlgorithms
+	if settings != nil {
+		legacy = settings.Settings().LegacyAlgorithms
 	}
 	host := domainvault.Host{LegacyAlgorithms: legacy}
 	return appconnection.Route{

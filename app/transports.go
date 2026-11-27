@@ -105,6 +105,13 @@ func moshRoute(ctx context.Context, spec appsession.StartSpec,
 	if err != nil {
 		return appconnection.Route{}, err
 	}
+	route, err = mergeSpecJumps(ctx, routes, spec, route)
+	if err != nil {
+		return appconnection.Route{}, err
+	}
+	// Mosh's UDP flow cannot run through a jump chain or a proxy. The refusal
+	// is reported to the caller, never silently ignored: the Session fails
+	// before any SSH channel opens.
 	if err := moshadapter.CheckRoute(len(route.Jumps), route.Proxy != nil); err != nil {
 		return appconnection.Route{}, err
 	}
