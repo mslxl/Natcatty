@@ -5,11 +5,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/mslxl/natcatty/domain/model"
 )
 
 type filesProbe struct {
-	remote []model.HostID
+	remote []FilesTarget
 	local  int
 	width  float32
 	dock   PanelDock
@@ -21,7 +20,7 @@ func (p *filesProbe) panel() FilesPanel {
 			p.width = width
 			return func(*ui.Context) {}
 		},
-		ShowRemote: func(host model.HostID, _ string) { p.remote = append(p.remote, host) },
+		ShowRemote: func(target FilesTarget) { p.remote = append(p.remote, target) },
 		ShowLocal:  func() { p.local++ },
 		Dock:       func() PanelDock { return p.dock },
 		SetDock:    func(dock PanelDock) { p.dock = dock },
@@ -74,7 +73,7 @@ func TestFilesViewPointsThePanelAtTheTabsHost(t *testing.T) {
 	if s.FilesView("remote-tab", 420) == nil {
 		t.Fatal("an open panel has no view")
 	}
-	if len(probe.remote) != 1 || probe.remote[0] != "h1" || probe.local != 0 {
+	if len(probe.remote) != 1 || probe.remote[0].HostID != "h1" || probe.local != 0 {
 		t.Fatalf("the remote Tab's panel showed remote=%v local=%d", probe.remote, probe.local)
 	}
 	if probe.width != 420 {
@@ -85,7 +84,7 @@ func TestFilesViewPointsThePanelAtTheTabsHost(t *testing.T) {
 		t.Fatalf("the local Tab's panel did not show this computer: local=%d", probe.local)
 	}
 	s.FilesView("remote-tab", 420)
-	if len(probe.remote) != 2 || probe.remote[1] != "h1" {
+	if len(probe.remote) != 2 || probe.remote[1].HostID != "h1" {
 		t.Fatalf("returning to the remote Tab did not point the panel back: %v", probe.remote)
 	}
 

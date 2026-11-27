@@ -56,8 +56,13 @@ const (
 // selection, ordering, and hidden-file setting. A Tab owns its FileSystem;
 // closing the Tab closes it.
 type Tab struct {
-	ID        int
-	Kind      TabKind
+	ID   int
+	Kind TabKind
+	// Target is the remote endpoint this Tab browses. A saved Host carries its
+	// HostID; an unsaved Quick Connect target carries the endpoint and its
+	// one-shot password. HostID and HostLabel mirror the display identity the
+	// rest of the surface already reads.
+	Target    apptransfer.RemoteTarget
 	HostID    model.HostID
 	HostLabel string
 	FS        apptransfer.FileSystem
@@ -521,21 +526,31 @@ func (s *State) OpenLocal(side Side) {
 	s.load(tab, s.rememberedCwd("", true))
 }
 
-// OpenRemote adds a remote Tab for a Host and makes it active. Choosing a
-// Host that already has a Tab in this pane reconnects that Tab instead of
-// opening a second one: a GUI Host reconnect is the product's reconnect path,
-// and an editing session opened from the Tab follows the new transport.
+// OpenRemote adds a remote Tab for a saved Host and makes it active.
 func (s *State) OpenRemote(side Side, hostID model.HostID, label string) {
-	if existing := s.remoteTab(side, hostID); existing != nil {
+	s.OpenTarget(side, apptransfer.RemoteTarget{HostID: hostID, Label: label})
+}
+
+// OpenTarget adds a remote Tab for a target and makes it active. Choosing a
+// target that already has a Tab in this pane reconnects that Tab instead of
+// opening a second one: a GUI Host reconnect is the product's reconnect path,
+// and an editing session opened from the Tab follows the new transport. The
+// target may be a saved Host or an unsaved Quick Connect endpoint.
+func (s *State) OpenTarget(side Side, target apptransfer.RemoteTarget) {
+	if existing := s.remoteTab(side, target); existing != nil {
 		s.activateTab(side, existing)
 		s.reconnectTab(existing)
 		return
 	}
+	if target.Label == "" {
+		target.Label = target.Hostname
+	}
 	tab := &Tab{
 		ID:        s.nextID,
 		Kind:      KindRemote,
-		HostID:    hostID,
-		HostLabel: label,
+		Target:    target,
+		HostID:    target.HostID,
+		HostLabel: target.Label,
 		Selection: map[string]bool{},
 		Sort:      domainsftp.Sort{Field: domainsftp.SortName},
 	}
@@ -545,16 +560,22 @@ func (s *State) OpenRemote(side Side, hostID model.HostID, label string) {
 	s.openRemote(tab)
 }
 
-// ShowRemote makes the pane's Tab for a Host active, opening one when the
-// pane has none. Unlike OpenRemote it leaves a connected Tab alone, so the
+// ShowRemote makes the pane's Tab for a saved Host active, opening one when
+// the pane has none.
+func (s *State) ShowRemote(side Side, hostID model.HostID, label string) {
+	s.ShowTarget(side, apptransfer.RemoteTarget{HostID: hostID, Label: label})
+}
+
+// ShowTarget makes the pane's Tab for a target active, opening one when the
+// pane has none. Unlike OpenTarget it leaves a connected Tab alone, so the
 // Session panel can follow the Session Tab the user switches to without
 // dropping the listing it already has.
-func (s *State) ShowRemote(side Side, hostID model.HostID, label string) {
-	if existing := s.remoteTab(side, hostID); existing != nil {
+func (s *State) ShowTarget(side Side, target apptransfer.RemoteTarget) {
+	if existing := s.remoteTab(side, target); existing != nil {
 		s.activateTab(side, existing)
 		return
 	}
-	s.OpenRemote(side, hostID, label)
+	s.OpenTarget(side, target)
 }
 
 // ShowLocal makes the pane's first local Tab active, opening one when the
@@ -569,14 +590,24 @@ func (s *State) ShowLocal(side Side) {
 	s.OpenLocal(side)
 }
 
-// remoteTab returns the pane's Tab for a Host, if it already has one.
-func (s *State) remoteTab(side Side, hostID model.HostID) *Tab {
+// remoteTab returns the pane's Tab for a target, if it already has one. A
+// saved Host matches by ID; an unsaved target matches by endpoint, so a
+// second Quick Connect to the same peer follows the Tab already browsing it.
+func (s *State) remoteTab(side Side, target apptransfer.RemoteTarget) *Tab {
 	for _, tab := range s.panes[side].Tabs {
-		if tab != nil && !tab.closed && tab.Kind == KindRemote && tab.HostID == hostID {
+		if tab != nil && !tab.closed && tab.Kind == KindRemote && sameTarget(tab.Target, target) {
 			return tab
 		}
 	}
 	return nil
+}
+
+// sameTarget reports whether two remote targets name the same endpoint.
+func sameTarget(a, b apptransfer.RemoteTarget) bool {
+	if a.Saved() || b.Saved() {
+		return a.Saved() && b.Saved() && a.HostID == b.HostID
+	}
+	return a.EndpointKey() == b.EndpointKey()
 }
 
 // activateTab makes tab the pane's active Tab.
@@ -597,7 +628,7 @@ func (s *State) activateTab(side Side, tab *Tab) {
 func (s *State) newRemoteLink(tab *Tab) *remoteLink {
 	link := &remoteLink{
 		dial: func(ctx context.Context) (apptransfer.FileSystem, error) {
-			return s.service.OpenRemote(ctx, tab.HostID, tab.HostLabel)
+			return s.service.OpenTarget(ctx, tab.Target)
 		},
 	}
 	link.adopt = func(files apptransfer.FileSystem) {
@@ -687,6 +718,7 @@ func (s *State) Duplicate(side Side) {
 	tab := &Tab{
 		ID:         s.nextID,
 		Kind:       source.Kind,
+		Target:     source.Target,
 		HostID:     source.HostID,
 		HostLabel:  source.HostLabel,
 		Selection:  map[string]bool{},
@@ -818,8 +850,13 @@ func (s *State) openRemote(tab *Tab) {
 			}
 			tab.FS = files
 			start := root
-			if cwd := s.rememberedCwd(tab.HostID, false); cwd != "" {
-				start = files.Canonical(cwd)
+			// An unsaved target has no Host-backed working-directory memory,
+			// and its empty HostID must not read the "host:" bucket another
+			// Session could write.
+			if tab.Target.Saved() {
+				if cwd := s.rememberedCwd(tab.HostID, false); cwd != "" {
+					start = files.Canonical(cwd)
+				}
 			}
 			s.loadAt(tab, start, false)
 			// Reconnecting a Host in the SFTP pane is the product's reconnect
