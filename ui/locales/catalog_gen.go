@@ -1208,6 +1208,98 @@ func (msgs Messages) QuickConnectKeepEditing() string {
 	return Catalog.Format(msgs.locale, "quickConnectKeepEditing", nil)
 }
 
+// QuickConnectJumpHosts says "Jump Hosts"
+// in the language the app shows.
+func QuickConnectJumpHosts() string { return In(i18n.Locale()).QuickConnectJumpHosts() }
+
+// QuickConnectJumpHosts says "Jump Hosts"
+// in the language of msgs.
+func (msgs Messages) QuickConnectJumpHosts() string {
+	return Catalog.Format(msgs.locale, "quickConnectJumpHosts", nil)
+}
+
+// QuickConnectJumpHostsHint says "Dialed in order, first closest to the client. Saved Hosts use their Vault credentials; temporary entries are never sa…"
+// in the language the app shows.
+func QuickConnectJumpHostsHint() string { return In(i18n.Locale()).QuickConnectJumpHostsHint() }
+
+// QuickConnectJumpHostsHint says "Dialed in order, first closest to the client. Saved Hosts use their Vault credentials; temporary entries are never sa…"
+// in the language of msgs.
+func (msgs Messages) QuickConnectJumpHostsHint() string {
+	return Catalog.Format(msgs.locale, "quickConnectJumpHostsHint", nil)
+}
+
+// QuickConnectAddSavedJump says "Add saved Host"
+// in the language the app shows.
+func QuickConnectAddSavedJump() string { return In(i18n.Locale()).QuickConnectAddSavedJump() }
+
+// QuickConnectAddSavedJump says "Add saved Host"
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddSavedJump() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddSavedJump", nil)
+}
+
+// QuickConnectAddTemporaryJump says "Add temporary"
+// in the language the app shows.
+func QuickConnectAddTemporaryJump() string { return In(i18n.Locale()).QuickConnectAddTemporaryJump() }
+
+// QuickConnectAddTemporaryJump says "Add temporary"
+// in the language of msgs.
+func (msgs Messages) QuickConnectAddTemporaryJump() string {
+	return Catalog.Format(msgs.locale, "quickConnectAddTemporaryJump", nil)
+}
+
+// QuickConnectJumpMoveUp says "Move closer to the client"
+// in the language the app shows.
+func QuickConnectJumpMoveUp() string { return In(i18n.Locale()).QuickConnectJumpMoveUp() }
+
+// QuickConnectJumpMoveUp says "Move closer to the client"
+// in the language of msgs.
+func (msgs Messages) QuickConnectJumpMoveUp() string {
+	return Catalog.Format(msgs.locale, "quickConnectJumpMoveUp", nil)
+}
+
+// QuickConnectJumpMoveDown says "Move closer to the target"
+// in the language the app shows.
+func QuickConnectJumpMoveDown() string { return In(i18n.Locale()).QuickConnectJumpMoveDown() }
+
+// QuickConnectJumpMoveDown says "Move closer to the target"
+// in the language of msgs.
+func (msgs Messages) QuickConnectJumpMoveDown() string {
+	return Catalog.Format(msgs.locale, "quickConnectJumpMoveDown", nil)
+}
+
+// QuickConnectJumpRemove says "Remove jump Host"
+// in the language the app shows.
+func QuickConnectJumpRemove() string { return In(i18n.Locale()).QuickConnectJumpRemove() }
+
+// QuickConnectJumpRemove says "Remove jump Host"
+// in the language of msgs.
+func (msgs Messages) QuickConnectJumpRemove() string {
+	return Catalog.Format(msgs.locale, "quickConnectJumpRemove", nil)
+}
+
+// QuickConnectJumpInvalid says "Every temporary jump Host needs an address and a port between 1 and 65535."
+// in the language the app shows.
+func QuickConnectJumpInvalid() string { return In(i18n.Locale()).QuickConnectJumpInvalid() }
+
+// QuickConnectJumpInvalid says "Every temporary jump Host needs an address and a port between 1 and 65535."
+// in the language of msgs.
+func (msgs Messages) QuickConnectJumpInvalid() string {
+	return Catalog.Format(msgs.locale, "quickConnectJumpInvalid", nil)
+}
+
+// QuickConnectJumpMoshUnsupported says "Mosh Sessions cannot use jump Hosts. Choose SSH or EternalTerminal, or remove the chain."
+// in the language the app shows.
+func QuickConnectJumpMoshUnsupported() string {
+	return In(i18n.Locale()).QuickConnectJumpMoshUnsupported()
+}
+
+// QuickConnectJumpMoshUnsupported says "Mosh Sessions cannot use jump Hosts. Choose SSH or EternalTerminal, or remove the chain."
+// in the language of msgs.
+func (msgs Messages) QuickConnectJumpMoshUnsupported() string {
+	return Catalog.Format(msgs.locale, "quickConnectJumpMoshUnsupported", nil)
+}
+
 // MenuCloseTab says "Close Tab"
 // in the language the app shows.
 func MenuCloseTab() string { return In(i18n.Locale()).MenuCloseTab() }

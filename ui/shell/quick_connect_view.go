@@ -152,6 +152,7 @@ func quickConnectFields(c *ui.Context, s *state.State, m locales.Messages, t *ui
 			ui.Checkbox(c.Key("quick-connect-network-device"), &form.NetworkDevice,
 				m.VaultHostNetworkDevice())
 		}
+		quickConnectJumpHosts(c, s, m, t)
 	case domainvault.ProtocolVNC:
 		kit.FormRow(c, m.QuickConnectUsername(), func() {
 			ui.TextInput(c.Key("quick-connect-username"), &form.Username).FillWidth()
@@ -286,6 +287,131 @@ func vncEndpointFields(c *ui.Context, s *state.State, m locales.Messages) {
 	}).FillWidth()
 }
 
+// quickConnectJumpHosts renders the ad-hoc jump chain: each hop in order
+// (first closest to the client), its temporary endpoint inputs, the
+// reorder/remove controls, and the two ways to add a hop — borrowing a saved
+// Vault Host from the menu, or typing a temporary one. A Mosh transport cannot
+// carry a chain, so the section explains the refusal instead of hiding it.
+func quickConnectJumpHosts(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	form := s.QuickConnectForm()
+	ui.Column(c).FillWidth().Gap(6).Children(func() {
+		ui.Text(c, m.QuickConnectJumpHosts()).FontSize(kit.M(c).Font.Callout).Bold()
+		ui.Text(c, m.QuickConnectJumpHostsHint()).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+
+		mosh := domainvault.NormalizeTransport(form.Protocol, form.Transport) == domainvault.TransportMosh
+		if mosh {
+			ui.Text(c, m.QuickConnectJumpMoshUnsupported()).FontSize(kit.M(c).Font.Footnote).
+				TextColor(uitheme.DangerText(t))
+		}
+
+		// A click mutates the chain mid-frame while later rows still draw, so
+		// the mutation is deferred past the draw loop. The rows draw from a
+		// snapshot copy: even after the slice shrinks, the text inputs keep a
+		// stable row for the rest of the frame.
+		type jumpEdit struct {
+			index int
+			delta int
+			drop  bool
+		}
+		var edit *jumpEdit
+		type jumpRow struct {
+			jump  state.QuickConnectJump
+			index int
+		}
+		rows := make([]jumpRow, len(form.Jumps))
+		for index := range form.Jumps {
+			rows[index] = jumpRow{jump: form.Jumps[index], index: index}
+		}
+		for _, row := range rows {
+			index := row.index
+			jump := row.jump
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, strconv.Itoa(index+1)+".").FontSize(kit.M(c).Font.Footnote).
+					TextColor(t.TextMuted).Shrink(0)
+				if jump.Kind == state.QuickConnectJumpSaved {
+					ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(4).Children(func() {
+						kit.Icon(c, icons.Server)
+						ui.Text(c, jump.Label).SingleLine()
+					})
+				} else {
+					ui.Column(c).Grow(1).Gap(4).Children(func() {
+						ui.Row(c).FillWidth().Gap(4).Children(func() {
+							ui.TextInput(c.Key("quick-connect-jump-host-"+strconv.Itoa(index)), &form.Jumps[index].Hostname).
+								Placeholder(m.QuickConnectAddressPlaceholder()).Grow(1)
+							ui.TextInput(c.Key("quick-connect-jump-port-"+strconv.Itoa(index)), &form.Jumps[index].Port).
+								Placeholder("22").Width(64).Shrink(0)
+						})
+						ui.Row(c).FillWidth().Gap(4).Children(func() {
+							ui.TextInput(c.Key("quick-connect-jump-user-"+strconv.Itoa(index)), &form.Jumps[index].Username).
+								Placeholder(m.QuickConnectUsername()).Grow(1)
+							ui.TextInput(c.Key("quick-connect-jump-pass-"+strconv.Itoa(index)), &form.Jumps[index].Password).
+								Placeholder(m.QuickConnectPassword()).Password().Grow(1)
+						})
+					})
+				}
+				ui.Row(c).Shrink(0).Gap(2).AlignItems(ui.Center).Children(func() {
+					// Each control names its hop, so assistive technology — and
+					// a row of identical arrows — can tell them apart.
+					hop := strconv.Itoa(index + 1)
+					up := kit.IconButton(c, icons.ArrowUp, m.QuickConnectJumpMoveUp()+" "+hop)
+					if index == 0 {
+						up.Disabled(true)
+					}
+					if up.Clicked() {
+						edit = &jumpEdit{index: index, delta: -1}
+						c.Invalidate()
+					}
+					down := kit.IconButton(c, icons.ArrowDown, m.QuickConnectJumpMoveDown()+" "+hop)
+					if index == len(rows)-1 {
+						down.Disabled(true)
+					}
+					if down.Clicked() {
+						edit = &jumpEdit{index: index, delta: 1}
+						c.Invalidate()
+					}
+					if kit.IconButton(c, icons.X, m.QuickConnectJumpRemove()+" "+hop).Clicked() {
+						edit = &jumpEdit{index: index, drop: true}
+						c.Invalidate()
+					}
+				})
+			})
+		}
+		// The chain edits after every row has drawn, so no input ever binds to
+		// a row the slice no longer has.
+		if edit != nil {
+			if edit.drop {
+				s.QuickConnectRemoveJump(edit.index)
+			} else {
+				s.QuickConnectMoveJump(edit.index, edit.delta)
+			}
+		}
+
+		ui.Row(c).FillWidth().Gap(8).Children(func() {
+			hosts := s.QuickConnectJumpHosts()
+			add := kit.SecondaryButton(c, icons.Plus, m.QuickConnectAddSavedJump())
+			if len(hosts) == 0 {
+				add.Disabled(true)
+			}
+			add.Menu(func(menu *ui.Menu) {
+				for _, host := range hosts {
+					label := host.Label
+					if label == "" {
+						label = host.Hostname
+					}
+					if menu.Item(label).Chosen() {
+						s.QuickConnectAddSavedJump(host.ID)
+						c.Invalidate()
+					}
+				}
+			})
+			if kit.SecondaryButton(c, icons.Plus, m.QuickConnectAddTemporaryJump()).Clicked() {
+				s.QuickConnectAddTemporaryJump()
+				c.Invalidate()
+			}
+		})
+	})
+}
+
 // quickConnectOptionLabel returns the label for current, or the first label
 // when current is not one of the options.
 func quickConnectOptionLabel(labels, values []string, current string) string {
@@ -321,6 +447,10 @@ func quickConnectProblem(m locales.Messages, issue state.QuickConnectIssue) stri
 		return m.VaultProblemVncWebSocketPath()
 	case state.QuickConnectIssueNoSessions:
 		return m.QuickConnectUnavailable()
+	case state.QuickConnectIssueJump:
+		return m.QuickConnectJumpInvalid()
+	case state.QuickConnectIssueJumpTransport:
+		return m.QuickConnectJumpMoshUnsupported()
 	default:
 		return ""
 	}

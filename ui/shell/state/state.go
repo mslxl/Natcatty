@@ -5,6 +5,7 @@
 package state
 
 import (
+	"encoding/json"
 	"context"
 	"errors"
 	"sync"
@@ -257,10 +258,14 @@ type State struct {
 	// filesOpen holds what each Tab's open panel browses, and filesShown the
 	// target the panel was last pointed at.
 	filesPanel *FilesPanel
-	filesOpen  map[model.TabID]filesTarget
-	filesShown *filesTarget
+	filesOpen  map[model.TabID]FilesTarget
+	filesShown *FilesTarget
 	filesRatio float32
 	filesWidth float32
+	// autoOpenSidePanel reads the "Open the side panel automatically" setting.
+	// It is consulted when a remote Session attaches; without it the panel
+	// stays closed until the user opens it.
+	autoOpenSidePanel func() bool
 	// sideTools are the side panel's tools besides SFTP. sideChosen holds each
 	// Tab's chosen one. sideDrawn and sideLast are per renderer: the tool a
 	// renderer drew this frame and the one it drew the frame before, so a
@@ -483,6 +488,9 @@ type State struct {
 	// quickConnect is the tab bar's quick-connect dialog. It opens an Unsaved
 	// Host Session and never writes to the Vault.
 	quickConnect quickConnectState
+	// quickConnectJumpHosts lists the Vault Hosts the quick-connect jump
+	// chain may borrow. Nil leaves the saved-host picker empty.
+	quickConnectJumpHosts func() []domainvault.Host
 
 	// searchState is the Quick Switcher and command palette overlay. A nil
 	// state leaves the chords and the overlay out, which test shells use.
@@ -1278,8 +1286,9 @@ func (s *State) openHost(host domainvault.Host, startup StartupInput, browser bo
 
 // openHostWithPassword is openHost plus a one-shot password for a target that
 // has no saved Host, as Quick Connect does. The password stays in memory: it is
-// passed to the Session but never stored in the workspace descriptor.
-func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput, browser bool, password string) error {
+// passed to the Session but never stored in the workspace descriptor. jumps is
+// the optional ad-hoc jump chain, memory-only exactly like the password.
+func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput, browser bool, password string, jumps ...appsession.Jump) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
@@ -1299,8 +1308,11 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 	spec := HostSessionSpec(host)
 	// The one-shot password is never stored in the workspace descriptor; it
 	// only travels into this Session's StartSpec and, for an Unsaved Host,
-	// into the encrypted in-memory store a retry reads it back from.
+	// into the encrypted in-memory store a retry reads it back from. The jump
+	// chain is the same: memory-only, never written to the Workspace or the
+	// Vault.
 	spec.Password = password
+	spec.Jumps = append([]appsession.Jump(nil), jumps...)
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	// The Tab exists before the dial finishes, so it can be opened while the
 	// connection is still starting and its Pane can show the progress.
@@ -1315,11 +1327,22 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 		AutoAttachTmux: plan.tmux,
 		ResumeKey:      resumeKey,
 	})
-	if host.ID == "" && password != "" && s.paneCredentials != nil {
+	if host.ID == "" && s.paneCredentials != nil {
 		// An Unsaved Host's retry has no Vault to read the credential from. Keep
 		// the one-shot password encrypted in memory so a retry of a failed dial
 		// offers it again; closePane drops it when the Pane leaves the layout.
-		_ = s.paneCredentials.Set(string(paneID), password)
+		if password != "" {
+			_ = s.paneCredentials.Set(string(paneID), password)
+		}
+		// The jump chain is as secret-bearing as the password — a temporary
+		// hop carries its own one-shot credential — so it is sealed the same
+		// way and the retry redials every hop instead of silently dropping
+		// the chain.
+		if len(spec.Jumps) > 0 {
+			if encoded, err := json.Marshal(spec.Jumps); err == nil {
+				_ = s.paneCredentials.Set(jumpChainOwner(paneID), string(encoded))
+			}
+		}
 	}
 
 	ctx := s.ctx
@@ -1607,6 +1630,7 @@ func (s *State) Flush() {
 		s.ReleasePaneGhosts()
 		s.ReleaseTabGhosts()
 		s.activateTab(len(s.tabs) - 1)
+		s.autoOpenFilesOnConnect(tab.ID, outcome.session, outcome.label)
 		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
@@ -1677,6 +1701,7 @@ func (s *State) applyPendingHostOutcome(outcome openOutcome) {
 	if tab, _ := s.tabByAnyID(outcome.tabID); tab != nil {
 		s.wireScreenLayout(tab)
 	}
+	s.autoOpenFilesOnConnect(outcome.tabID, outcome.session, outcome.label)
 	if outcome.browser {
 		if opener, ok := surface.(BrowserOpener); ok {
 			_ = opener.OpenBrowser()

@@ -755,13 +755,15 @@ func run(options runOptions) error {
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
-	routes := vaultRoutes{vault: vaultService, preferences: preferenceService}
+	routes := vaultRoutes{vault: vaultService, preferences: preferenceService,
+		terminalSettings: terminalService}
 
 	// SFTP reuses the Vault's routes and the same connection manager as a
 	// terminal Session. The local pane and the global bookmark file belong to
 	// the same service, so both panes share one copy engine. The same opener
 	// serves the read-only Host Atuin probe.
-	remoteOpener := &sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService}
+	remoteOpener := &sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService,
+		terminalSettings: terminalService}
 	hostAtuinService := apphostatuin.New(
 		apphostatuin.WithRemote(atuinRemoteSource{opener: remoteOpener}),
 		apphostatuin.WithDatabase(adapteratuinimport.Reader{}),
@@ -1503,10 +1505,30 @@ func run(options runOptions) error {
 		state.WithSFTPTabShown(func() bool {
 			return preferenceService.Settings().Layout.ShowSFTPTab
 		}),
+		state.WithAutoOpenSidePanel(func() bool {
+			return preferenceService.Settings().SFTPEditor.AutoOpenSidebar
+		}),
+		// Quick Connect's jump chain may borrow any saved SSH Host's endpoint
+		// and credentials. The resolver reads the Vault on every frame, so a
+		// Host created or removed while the dialog is open shows correctly.
+		state.WithQuickConnectJumpHosts(func() []domainvault.Host {
+			if vaultState == nil {
+				return nil
+			}
+			return vaultState.EffectiveItems()
+		}),
 		state.WithFilesPanel(state.FilesPanel{
 			View: func(width float32) func(*ui.Context) { return transferui.SidePanel(filesState, width) },
-			ShowRemote: func(hostID model.HostID, label string) {
-				filesState.ShowRemote(transferstate.Left, hostID, label)
+			ShowRemote: func(target state.FilesTarget) {
+				filesState.ShowTarget(transferstate.Left, apptransfer.RemoteTarget{
+					HostID:   target.HostID,
+					Label:    target.Label,
+					Hostname: target.Hostname,
+					Port:     target.Port,
+					Username: target.Username,
+					Password: target.Password,
+					Jumps:    remoteJumps(target.Jumps),
+				})
 			},
 			ShowLocal: func() { filesState.ShowLocal(transferstate.Left) },
 			Dock: func() state.PanelDock {
