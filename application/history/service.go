@@ -51,6 +51,10 @@ type Store interface {
 	// HistoryMetadata reads the device-local import, notice, and sync state,
 	// including the durable one-time Shell History File import marker.
 	HistoryMetadata(context.Context) (domainhistory.Metadata, error)
+	// SaveHistoryMetadata replaces the device-local state. The one-time
+	// cleanup sets its durable marker through it after deleting the rows the
+	// marker covers.
+	SaveHistoryMetadata(context.Context, domainhistory.Metadata) error
 	// ListHistoryEntriesIncludingDeleted returns every recorded command,
 	// including soft-deleted rows. The one-time import deduplicates against
 	// them so it never resurrects a command the user deleted.
@@ -337,6 +341,51 @@ func shellHistoryDuplicate(candidate domainhistory.Entry, existing []domainhisto
 		}
 	}
 	return false
+}
+
+// CleanCorruptedRows runs the one-time migration that soft-deletes journal
+// rows whose command text could never have been typed. Rows captured before
+// the tap's untraceable-edit stop-loss can carry control bytes, the caret
+// notation a terminal echo prints for them, or invalid UTF-8: they are the
+// garbled rows autocomplete then completes from. The deletion is the ordinary
+// soft-delete with its tombstone, so the user can still see what was removed
+// in the History surface's deleted view and a synced install propagates the
+// tombstone instead of the garbage. The marker makes the migration a no-op
+// after the first completed attempt: a corrupted row captured later is the
+// capture pipeline's own defect, not a legacy artifact, and must not be
+// silently swept away. The predicate is deliberately narrow — domainhistory
+// .Corrupted never matches a plain short or odd command — because a mistaken
+// deletion of real history is worse than a fragment left behind.
+func (s *Service) CleanCorruptedRows(ctx context.Context) (int, error) {
+	if s.store == nil {
+		return 0, ErrInvalid
+	}
+	metadata, err := s.store.HistoryMetadata(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if metadata.CorruptedRowsCleaned {
+		return 0, nil
+	}
+	entries, err := s.store.ListHistoryEntries(ctx)
+	if err != nil {
+		return 0, err
+	}
+	corrupted := make([]domainhistory.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.DeletedAt.IsZero() && domainhistory.Corrupted(entry.Command) {
+			corrupted = append(corrupted, entry)
+		}
+	}
+	removed, err := s.deleteInBatches(ctx, corrupted)
+	if err != nil {
+		return removed, err
+	}
+	metadata.CorruptedRowsCleaned = true
+	if err := s.store.SaveHistoryMetadata(ctx, metadata); err != nil {
+		return removed, fmt.Errorf("history: mark corrupted rows cleaned: %w", err)
+	}
+	return removed, nil
 }
 
 // createRecord returns the create record that belongs to a newly recorded

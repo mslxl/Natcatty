@@ -444,6 +444,13 @@ func run(options runOptions) error {
 	if options.importsShellHistory() {
 		importShellHistory(context.Background(), historyService, shellHistory,
 			resolveCommandLocalIdentity())
+		// The one-time cleanup of rows the capture wrote before the tap's
+		// untraceable-edit stop-loss. It belongs with the import: both are
+		// journal migrations that run before autocomplete loads its snapshot
+		// below, and both are durable no-ops after the first completed
+		// attempt. A failure leaves the marker unset so the next startup
+		// retries.
+		_, _ = historyService.CleanCorruptedRows(context.Background())
 	}
 	autocompleteService := autocomplete.NewService(
 		historyService,

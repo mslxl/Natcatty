@@ -24,9 +24,10 @@ import (
 // the Surface: the accepted command must be the line the shell holds, with no
 // control bytes left behind. PSReadLine binds Ctrl+U to Undo, so the earlier
 // Ctrl+U accept left "git s^Ugit stash" on the PowerShell line; this test
-// presses Tab and clicks a popup row against a real shell, then runs the
-// accepted command. Its exact output line proves the shell received the
-// suggestion as the whole line and nothing else.
+// steers the popup with the arrow keys — the live preview rendering the
+// candidate into the real line — and clicks a popup row against a real shell,
+// then runs the accepted command. Its exact output line proves the shell
+// received the suggestion as the whole line and nothing else.
 func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 	command := realShellCommand(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -48,14 +49,14 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 	// The two rounds use distinct commands so the status bar, which remembers
 	// the previous command, cannot be mistaken for the popup row by its text.
 	const (
-		tabPrefix     = "echo NATCAT_TAB_"
-		tabSuggestion = "echo NATCAT_TAB_OK"
-		tabMarker     = "NATCAT_TAB_OK"
-		clickPrefix   = "echo NATCAT_CLICK_"
-		clickSuggest  = "echo NATCAT_CLICK_OK"
-		clickMarker   = "NATCAT_CLICK_OK"
+		previewPrefix     = "echo NATCAT_TAB_"
+		previewSuggestion = "echo NATCAT_TAB_OK"
+		previewMarker     = "NATCAT_TAB_OK"
+		clickPrefix       = "echo NATCAT_CLICK_"
+		clickSuggest      = "echo NATCAT_CLICK_OK"
+		clickMarker       = "NATCAT_CLICK_OK"
 	)
-	providers := map[string]string{tabPrefix: tabSuggestion, clickPrefix: clickSuggest}
+	providers := map[string]string{previewPrefix: previewSuggestion, clickPrefix: clickSuggest}
 	surface, err := sessionui.New(session,
 		sessionui.WithRedraw(func() {}),
 		sessionui.WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
@@ -87,9 +88,13 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 		if !realShellWait(t, func() bool { return session.Snapshot().Input == prefix }) {
 			t.Fatalf("%s: the typed line is %q, want %q", name, session.Snapshot().Input, prefix)
 		}
-		tester.Frame()
-		if !tester.HasText(suggestion) {
-			t.Fatalf("%s: the popup does not show the suggestion: %v", name, tester.Texts())
+		// The popup is automatic: once the debounce passes the rows are on
+		// screen without any key.
+		if !realShellWait(t, func() bool {
+			tester.Frame()
+			return tester.HasText(suggestion)
+		}) {
+			t.Fatalf("%s: the popup never opened after the debounce: %v", name, tester.Texts())
 		}
 		accept()
 		if !realShellWait(t, func() bool { return session.Snapshot().Input == suggestion }) {
@@ -132,9 +137,11 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 		}
 	}
 
-	// Tab takes the production key path through the terminal's OnKey hook.
-	acceptAndRun("Tab", tabPrefix, tabSuggestion, tabMarker, true,
-		func() { tester.Key(0, ui.KeyTab) })
+	// Arrowing onto the row takes the production key path through the
+	// terminal's OnKey hook: the live preview writes the candidate into the
+	// real line, and Enter — never intercepted — runs it.
+	acceptAndRun("preview", previewPrefix, previewSuggestion, previewMarker, true,
+		func() { tester.Key(0, ui.KeyDown) })
 
 	// Clicking a popup row must take the same verified write path.
 	acceptAndRun("click", clickPrefix, clickSuggest, clickMarker, false, func() {
@@ -144,7 +151,7 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 	})
 
 	screen := surface.ScreenText()
-	if !commandRanOnScreen(screen, tabSuggestion, tabMarker) ||
+	if !commandRanOnScreen(screen, previewSuggestion, previewMarker) ||
 		!commandRanOnScreen(screen, clickSuggest, clickMarker) {
 		t.Fatalf("the shell did not run both accepted commands: %q", screen)
 	}
@@ -154,7 +161,7 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 // state autocomplete depends on. A fast command's prompt can arrive inside the
 // fallback's guard window; once that happened with no further output, Running
 // stayed true and autocomplete stayed suppressed until Ctrl+C. Running a real
-// command must clear Running and the next typed prefix must open the popup
+// command must clear Running and the next typed prefix must complete again
 // without any interrupt.
 func TestSurfaceAutocompleteAfterAFastRealCommand(t *testing.T) {
 	command := realShellCommand(t)
@@ -241,8 +248,15 @@ func TestSurfaceAutocompleteAfterAFastRealCommand(t *testing.T) {
 		t.Fatalf("the typed line is %q, want %q", session.Snapshot().Input, prefix)
 	}
 	tester.Frame()
-	if !tester.HasText(suggestion) {
+	if !realShellWait(t, func() bool { return len(surface.SuggestionRows()) > 0 }) {
 		t.Fatalf("autocomplete stayed suppressed after a fast command: %v", tester.Texts())
+	}
+	// The popup is automatic: rows on screen without any key.
+	if !realShellWait(t, func() bool {
+		tester.Frame()
+		return tester.HasText(suggestion)
+	}) {
+		t.Fatalf("the popup did not open after a fast command: %v", tester.Texts())
 	}
 }
 

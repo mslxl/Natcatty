@@ -149,6 +149,13 @@ type tapState struct {
 	// InputCursor is the cursor's rune offset within Input. It is where the
 	// next typed character goes and what an accepted suggestion may replace.
 	InputCursor int
+	// InputScreenSourced reports that Input is the rendered line rather than
+	// the keystroke mirror: an untrackable edit (completion, recall, reverse
+	// search) killed the mirror and the screen is the only witness. A
+	// screen-sourced input is a lagging witness — echo that has not caught up
+	// reads as a shortening of the real line — which a consumer keying off
+	// input changes must know.
+	InputScreenSourced bool
 	// HookActive reports that the session-scoped Netcatty hook has emitted an
 	// authoritative event for this Session, so capture can reach Tier 1.
 	HookActive bool
@@ -278,6 +285,45 @@ type terminalTap struct {
 	inputCursor  int
 	inputPending []byte
 	inputEscape  inputState
+	// inputLost reports that the line editor changed the buffer in a way the
+	// tap cannot mirror: history recall (Up/Down), reverse search (Ctrl+R),
+	// word kills and yanks (Ctrl+W/Y), or a transpose (Ctrl+T) replace or
+	// reorder text the tap never sees. The tracked line is then a hybrid of
+	// what the user typed and what the editor recalled, and recording it at
+	// Enter writes a command that never ran — the garbled rows autocomplete
+	// later offers. The capture is discarded instead: no row is better than a
+	// wrong row, because the hook and the shell's own native marks still
+	// capture what they can prove. The next Enter or Ctrl+C re-arms the tap.
+	inputLost bool
+	// submittedInput reads the logical input line the shell actually shows on
+	// the cursor's prompt rows, prompt chrome included — the screen's truth at
+	// the moment Enter is pressed. It is nil when no live view is attached, and
+	// it answers ok=false when there is no trustworthy line (no shell
+	// integration, a program running, the alternate screen). The tap consults
+	// it to reconcile the keystroke mirror against the rendered line: after a
+	// history recall or reverse search the mirror is empty or lost but the
+	// rendered line is the command about to run. It is invoked synchronously
+	// from the input path, so it must only read the screen, never write input.
+	// Guarded by mu.
+	submittedInput func() (string, int, bool)
+	// promptPrefix is the prompt chrome the tap captured from the screen: the
+	// text up to the cursor at the first keystroke of a fresh line, the one
+	// moment echo is provably absent because the keystroke has not even reached
+	// the shell. It is the natcatty answer to the original's cached
+	// lastPromptText — read from the screen, never guessed from prompt shapes.
+	// The recall fallback subtracts it from the rendered line to split the
+	// input from the chrome. Empty when never captured, in which case a recall
+	// capture degrades to the safe discard. Guarded by mu.
+	promptPrefix string
+	// inputPristine reports that the tracked line has held nothing since the
+	// last fresh-line reset (Enter or Ctrl+C): no printable byte has joined
+	// the mirror yet. It is the gate for the prompt capture — only then is the
+	// screen provably bare of echo. A line the user typed into and erased back
+	// to empty is not pristine: the echo of the erasure can still be in flight
+	// on a slow link, so the screen may show a half-erased line, and capturing
+	// that residue as prompt chrome would strip real command text later.
+	// Guarded by mu.
+	inputPristine bool
 	// inputCSIParams holds the parameter bytes of the CSI sequence being
 	// parsed, so the tap can recognize the bracketed-paste markers.
 	inputCSIParams []byte
@@ -325,12 +371,25 @@ func newTerminalTap(policy domainterminal.ClipboardAccess) *terminalTap {
 		policy: policy,
 		osc99:  osc99Assembler{pending: make(map[string]*osc99Pending)},
 		stats:  Stats{},
+		// The first line of a session is as fresh as one after Enter: nothing
+		// has been typed into it, so its first keystroke is echo-free.
+		inputPristine: true,
 	}
 }
 
 func (t *terminalTap) setClipboardPolicy(policy domainterminal.ClipboardAccess) {
 	t.mu.Lock()
 	t.policy = policy
+	t.mu.Unlock()
+}
+
+// setSubmittedInputReader registers the reader the tap consults at Enter, or
+// clears it with nil. The reader is the live view's window onto the screen; it
+// is replaced when a view attaches and cleared when it detaches, so a
+// hibernated view never answers for its replacement.
+func (t *terminalTap) setSubmittedInputReader(reader func() (string, int, bool)) {
+	t.mu.Lock()
+	t.submittedInput = reader
 	t.mu.Unlock()
 }
 
@@ -1880,6 +1939,18 @@ func promptLike(line string) bool {
 // call, and the transfer state change. During a transfer all normal input is
 // dropped; Ctrl+C aborts with the original five CAN bytes.
 func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, bool, []capturedCommand, *TransferState) {
+	return t.handleInputProvenance(data, now, true)
+}
+
+// handleInputProvenance is handleInput with the chunk's provenance: typed is
+// true only for keystrokes typed in this Session's own terminal. A delivered
+// copy — a broadcast fan-out, a compose submission, an inserted snippet, the
+// startup command — is mirrored exactly the same, but the screen is never
+// consulted for it: the reader answers for the user's own keystrokes, and a
+// delivery's first byte is no fresh-line keystroke, so capturing the prompt
+// or arbitrating against the rendered line for it would read a moment that
+// has nothing to do with the copy.
+func (t *terminalTap) handleInputProvenance(data []byte, now time.Time, typed bool) ([]byte, bool, bool, []capturedCommand, *TransferState) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.transfer.Active {
@@ -1893,11 +1964,11 @@ func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, boo
 		}
 		return nil, false, false, nil, nil
 	}
-	changed, started, completions := t.recordInput(data, now)
+	changed, started, completions := t.recordInput(data, now, typed)
 	return data, changed, started, completions, nil
 }
 
-func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []capturedCommand) {
+func (t *terminalTap) recordInput(data []byte, now time.Time, typed bool) (bool, bool, []capturedCommand) {
 	changed := false
 	started := false
 	var completions []capturedCommand
@@ -1917,6 +1988,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				value = '\n'
 			}
 			if (value >= 0x20 && value != 0x7f) || value == '\n' || value == '\t' {
+				t.inputPristine = false
 				changed = t.appendInputByte(value) || changed
 			}
 			continue
@@ -1944,8 +2016,16 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				}
 				// Cursor keys and home/end move the line editor's cursor;
 				// tracking them keeps the accepted-suggestion erase boundary
-				// and the typed line in agreement.
-				t.applyInputCSI(value)
+				// and the typed line in agreement. Inside a paste they are not
+				// keys at all: the editor inserts the pasted bytes literally,
+				// so the sequence must neither move the tracked cursor nor
+				// (for the recall keys) discard a paste that is fully
+				// traceable. The pasted control bytes themselves never join
+				// the tracked line either way, since the input filter only
+				// takes printable text.
+				if !t.inputPaste {
+					t.applyInputCSI(value)
+				}
 				t.inputEscape = inputPlain
 				t.inputCSIParams = t.inputCSIParams[:0]
 			case value >= 0x30 && value <= 0x3f:
@@ -1978,6 +2058,8 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			t.inputBuffer = ""
 			t.inputCursor = 0
 			t.inputPending = nil
+			t.inputLost = false
+			t.inputPristine = true
 			// Ctrl+C never emits by itself: the shell may still report an exit
 			// code such as 130, or a prompt fallback or Session close may
 			// finalize the command with an unknown exit.
@@ -2010,16 +2092,37 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				t.inputCursor = 0
 				changed = true
 			}
+		case 0x12, 0x17, 0x19, 0x14, 0x0e, 0x10:
+			// Ctrl+R reverse search, Ctrl+W word kill, Ctrl+Y yank, Ctrl+T
+			// transpose, Ctrl+N/P history step: each rewrites the buffer from
+			// the shell's own history or kill ring, which the tap never sees.
+			// A wrong capture is worse than none — the hybrid line becomes a
+			// command that never ran — so the capture is discarded.
+			t.inputPending = nil
+			t.invalidateInputLocked()
+		case 0x09:
+			// Tab in a line editor is the completion key, not text: the shell
+			// may rewrite the line in a way the tap cannot mirror, exactly
+			// like a history recall — so it invalidates the mirror the same
+			// way. The completion's capture is the rendered line's job: the
+			// editor repaints the completed text whole, and the lost path
+			// prefers that truth. This is the original's answer too, where
+			// Tab lands in the generic untrackable-control-byte branch.
+			t.inputPending = nil
+			t.invalidateInputLocked()
 		case 0x7f, 0x08:
 			t.inputPending = nil
 			if t.deleteInputRuneBeforeCursor() {
 				changed = true
 			}
 		case '\r', '\n':
-			command := strings.TrimSpace(t.inputBuffer)
+			mirror := strings.TrimSpace(t.inputBuffer)
+			lost := t.inputLost
 			t.inputBuffer = ""
 			t.inputCursor = 0
 			t.inputPending = nil
+			t.inputLost = false
+			t.inputPristine = true
 			if t.hookActive {
 				// The installed hook's private preexec sequence is the only
 				// authority while it is active. Typed Enter must not start,
@@ -2038,6 +2141,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 				changed = true
 				continue
 			}
+			command := t.arbitrateSubmittedLocked(mirror, lost, typed)
 			if command != "" {
 				if previous := t.finalizePendingLocked(now, false, 0, false); previous != nil {
 					// A new Enter finalizes the previous command with an
@@ -2066,11 +2170,53 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			changed = true
 		default:
 			if value >= 0x20 {
+				// The first keystroke of a pristine line is the one moment the
+				// screen provably shows the bare prompt: the echo of this very
+				// byte cannot have rendered yet, because it has not even reached
+				// the shell. Capturing the prompt at Enter is unreliable — fast
+				// input outruns the echo round-trip, so the screen then lags the
+				// mirror — but here the line is still exactly the prompt. This
+				// is the natcatty answer to the original's prompt cache. The
+				// pristine gate excludes a line erased back to empty, whose
+				// erase echo can still be in flight: capturing then would
+				// snapshot the half-erased residue as chrome.
+				if typed && t.inputPristine && !t.inputLost {
+					t.captureEmptyPromptLocked()
+				}
+				t.inputPristine = false
 				changed = t.appendInputByte(value) || changed
 			}
 		}
 	}
 	return changed, started, completions
+}
+
+// captureEmptyPromptLocked records the bare prompt as the prompt prefix. It
+// reads the rendered line at the first keystroke of a pristine line, so
+// everything up to the cursor is prompt chrome. The cursor sits at the
+// input-start position there, and a prompt's trailing space is before it, so
+// the text up to the cursor is exactly the prefix; the renderer's padding
+// beyond the cursor never joins it. Reading only at a pristine first
+// keystroke keeps the capture free of echo — the byte has not reached the
+// shell, and no erasure echo can still be in flight — so it never mistakes
+// input for chrome. The caller holds mu.
+func (t *terminalTap) captureEmptyPromptLocked() {
+	if t.submittedInput == nil {
+		return
+	}
+	line, cursorOffset, ok := t.submittedInput()
+	if !ok {
+		return
+	}
+	runes := []rune(line)
+	if cursorOffset <= 0 || cursorOffset > len(runes) {
+		return
+	}
+	prefix := string(runes[:cursorOffset])
+	if prefix == "" {
+		return
+	}
+	t.promptPrefix = prefix
 }
 
 // appendInputByte records typed text one byte at a time, waiting for a
@@ -2166,8 +2312,10 @@ func (t *terminalTap) deleteInputRuneAtCursor() bool {
 }
 
 // applyInputCSI mirrors the cursor-editing control sequences a line editor
-// understands. Other sequences, including the bracketed-paste markers, leave
-// the tracked cursor alone.
+// understands. The history keys are the ones it cannot mirror: Up and Down
+// replace the whole buffer with a history entry the tap never sees, so the
+// capture is discarded rather than left a hybrid. Other sequences, including
+// the bracketed-paste markers, leave the tracked cursor alone.
 func (t *terminalTap) applyInputCSI(final byte) {
 	params := t.inputCSIParams
 	switch final {
@@ -2175,6 +2323,11 @@ func (t *terminalTap) applyInputCSI(final byte) {
 		t.moveInputCursor(-1)
 	case 'C':
 		t.moveInputCursor(1)
+	case 'A', 'B':
+		// Up/Down recall history in every shell line editor (readline, zle,
+		// PSReadLine, and the bare shell's own). A modifier form (CSI 1;5A and
+		// friends) is still a history or word motion the tap cannot model.
+		t.invalidateInputLocked()
 	case 'H':
 		t.inputCursor = 0
 	case 'F':
@@ -2189,6 +2342,99 @@ func (t *terminalTap) applyInputCSI(final byte) {
 			t.deleteInputRuneAtCursor()
 		}
 	}
+}
+
+// invalidateInputLocked drops the tracked input after the line editor changed
+// it in a way the tap cannot mirror. The buffer and cursor are kept for the
+// autocomplete popup — the text still on screen is a better completion target
+// than nothing — but Enter will not record the hybrid as a command. Typing
+// more characters does not lift the invalidation: the recalled base stays
+// unknown, so the line never becomes traceable again in this capture.
+func (t *terminalTap) invalidateInputLocked() {
+	t.inputLost = true
+}
+
+// arbitrateSubmittedLocked reconciles the keystroke mirror with the input the
+// shell actually shows on the cursor's line, returning the command Enter is
+// about to submit. The mirror is the most current witness when it is reliable
+// — echo can lag behind fast typing on a slow link, so the screen then trails
+// the buffer — but it goes blind when the line editor rewrites the line in a
+// way the tap cannot mirror: a history recall, a reverse search, or a
+// completion swaps in text the tap never sees. Every keystroke that can do so
+// invalidates the mirror — there is no fragment guessing, because a mirror
+// outgrown by the screen is indistinguishable at Enter from erase echo still
+// in flight, and the original's answer is the same: the edit keystroke is
+// untrackable, full stop. Then the rendered line is the truth.
+//
+// The rendered line carries the prompt chrome, which the tap strips with the
+// prompt prefix it captured at the first keystroke of a fresh line. mirror is
+// the trimmed keystroke buffer; lost reports an untraceable edit; typed is
+// false for a delivered copy (broadcast, compose, insert, startup), which
+// never consults the screen. The reader is consulted at most once, here, and
+// never under a hook-owned or awaiting-hook line (those return before this
+// point). The caller holds mu.
+func (t *terminalTap) arbitrateSubmittedLocked(mirror string, lost bool, typed bool) string {
+	if !typed {
+		// A delivered copy has no screen moment of its own: the mirror is the
+		// only witness that may speak for it, and the recall discard applies
+		// to it exactly as if no reader existed.
+		if mirror != "" && !lost {
+			return mirror
+		}
+		return ""
+	}
+	if mirror != "" && !lost {
+		// A reliable non-empty mirror wins: it is ahead of any lagging echo,
+		// and nothing the editor did went unmirrored — every keystroke that
+		// can rewrite the line invisibly, completion included, invalidates
+		// the mirror instead. This is the common case.
+		return mirror
+	}
+	input, rendered := t.renderedInputLocked()
+	// From here the mirror is either empty or a lost hybrid. Neither may be
+	// recorded as-is: the hybrid is a command that never ran, and empty is
+	// nothing. The only thing that can rescue the capture is the rendered line
+	// minus the prompt; without it the recall discard stands, because no row is
+	// better than a wrong row.
+	if !rendered || input == "" {
+		// An empty input is also what a no-echo password prompt looks like, and
+		// a line that does not start with the captured prompt is a redraw the
+		// capture cannot trust. Never record either, and never surface the
+		// secret the mirror may still hold — the discard is the safe answer.
+		return ""
+	}
+	// The mirror is empty or a lost hybrid, and the rendered line minus the
+	// prompt is the command about to run: a recall repainted it whole — or a
+	// completion did, the Tab byte having lost the mirror the same way.
+	return input
+}
+
+// renderedInputLocked reads the rendered line once and strips the captured
+// prompt chrome, returning the input the line editor is showing. rendered is
+// false when there is no trustworthy line to read: no reader, no captured
+// prompt prefix, the cursor off the prompt rows, or a line that does not
+// start with the captured chrome. The caller holds mu.
+func (t *terminalTap) renderedInputLocked() (input string, rendered bool) {
+	if t.submittedInput == nil || t.promptPrefix == "" {
+		return "", false
+	}
+	line, _, ok := t.submittedInput()
+	if !ok {
+		return "", false
+	}
+	return t.stripPromptPrefixLocked(strings.TrimRight(line, " \t")), true
+}
+
+// stripPromptPrefixLocked removes the captured prompt chrome from the rendered
+// line, returning the input the line editor is showing. It returns "" when the
+// line does not start with the captured prefix (a prompt that changed shape, or
+// input echoing a different program's prompt) or when nothing but the prompt is
+// on the line. The caller holds mu.
+func (t *terminalTap) stripPromptPrefixLocked(line string) string {
+	if !strings.HasPrefix(line, t.promptPrefix) {
+		return ""
+	}
+	return strings.TrimSpace(line[len(t.promptPrefix):])
 }
 
 // firstCSIParameter is the first numeric parameter of a CSI sequence, for the
@@ -2231,18 +2477,38 @@ func (t *terminalTap) completeTransfer(now time.Time) bool {
 func (t *terminalTap) state(now time.Time) tapState {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	input := t.inputBuffer
+	inputCursor := t.inputCursor
+	screenSourced := false
+	if t.inputLost {
+		// The mirror is a dead hybrid for the rest of this line — recall,
+		// reverse search, completion — but the line editor repaints the truth.
+		// What the popup offers against a stale hybrid is worse than what it
+		// offers against the painted line, so the rendered input answers for
+		// the mirror here exactly as it does for the capture at Enter. Where
+		// the screen cannot prove the line, the hybrid stays: a completion
+		// source that is mostly right beats none, and capture discards either
+		// way. This is the original's #906: the screen is the only post-edit
+		// source of truth.
+		if screenInput, screenCursor, ok := t.renderedInputAtLocked(); ok {
+			input = screenInput
+			inputCursor = screenCursor
+			screenSourced = true
+		}
+	}
 	state := tapState{
-		CWD:            t.cwd,
-		Title:          t.title,
-		Command:        t.command,
-		Input:          t.inputBuffer,
-		InputCursor:    t.inputCursor,
-		HookActive:     t.hookActive,
-		BracketedPaste: t.bracketedPaste,
-		Busy:           t.busyLocked(now),
-		LastActivity:   t.lastOutput,
-		Transfer:       t.transfer,
-		Stats:          t.stats,
+		CWD:                t.cwd,
+		Title:              t.title,
+		Command:            t.command,
+		Input:              input,
+		InputCursor:        inputCursor,
+		InputScreenSourced: screenSourced,
+		HookActive:         t.hookActive,
+		BracketedPaste:     t.bracketedPaste,
+		Busy:               t.busyLocked(now),
+		LastActivity:       t.lastOutput,
+		Transfer:           t.transfer,
+		Stats:              t.stats,
 	}
 	if t.notification != nil {
 		copyNotification := *t.notification
@@ -2253,6 +2519,34 @@ func (t *terminalTap) state(now time.Time) tapState {
 		state.Clipboard = &copyClipboard
 	}
 	return state
+}
+
+// renderedInputAtLocked is renderedInputLocked with the cursor's rune offset
+// within the stripped input: the reader's offset counts from the line's
+// start, prompt chrome included, so the captured prefix's length comes off
+// it. ok is false exactly when renderedInputLocked cannot prove the line.
+// The caller holds mu.
+func (t *terminalTap) renderedInputAtLocked() (input string, cursor int, ok bool) {
+	if t.submittedInput == nil || t.promptPrefix == "" {
+		return "", 0, false
+	}
+	line, cursorOffset, success := t.submittedInput()
+	if !success {
+		return "", 0, false
+	}
+	stripped := t.stripPromptPrefixLocked(strings.TrimRight(line, " \t"))
+	if stripped == "" {
+		return "", 0, false
+	}
+	prefixRunes := len([]rune(t.promptPrefix))
+	cursor = cursorOffset - prefixRunes
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len([]rune(stripped)) {
+		cursor = len([]rune(stripped))
+	}
+	return stripped, cursor, true
 }
 
 func (t *terminalTap) busyLocked(now time.Time) bool {

@@ -340,6 +340,15 @@ type Surface struct {
 	// The Pane writes it, because it draws the grid and owns the pointer
 	// mapping; it lives here for the same reason the selection does.
 	liveHover appview.Hover
+	// liveAnchor is where the live grid and its cursor row are in the window,
+	// written by the Pane every frame. The autocomplete popup anchors at the
+	// cursor row, and neither the pane's bounds nor the terminal's screen-row
+	// arithmetic can place it: the grid sits below the flow's finished blocks,
+	// renders only the live tail, and moves with the scroll. The Pane draws
+	// the rows, so it is the one component that knows where they are. The
+	// anchor is the previous frame's layout, one frame behind a resize, which
+	// the placement clamps away.
+	liveAnchor appview.LiveAnchor
 
 	gate             *PasteGate
 	drops            *DropHandler
@@ -441,6 +450,26 @@ type Surface struct {
 	suggestionTimer     *time.Timer
 	showAutocomplete    bool
 	showGhost           bool
+	// Live-preview state: while previewActive the shell line holds
+	// previewLine — the full line content the last preview write produced —
+	// with the cursor at previewCursor. previewBaseline is the line as typed
+	// before the first preview write and previewBaselineHead the part of it
+	// left of the cursor: reverting erases everything the chain left of the
+	// cursor and writes the head back, which reconstructs the baseline at
+	// exactly its cursor, because preview writes never touch the line right
+	// of the cursor. Typing under a preview drops the state: the edit is the
+	// user's, and nothing may drag the line back after it.
+	previewActive       bool
+	previewBaseline     string
+	previewBaselineHead string
+	previewLine         string
+	previewCursor       int
+	// ownWriteLine is the line content the surface's most recent write to the
+	// shell produced, or "" when no write is in flight. The refresh loop
+	// recognizes it: a write the surface itself made is not the user's edit,
+	// so it neither expires a dismissal nor drops preview state nor
+	// recomputes the rows against the surface's own output.
+	ownWriteLine string
 	// programPrompt reports that the last refresh found a non-shell program
 	// waiting for ordinary input. Acceptance uses it to replace only the typed
 	// query instead of the whole shell line.
@@ -566,6 +595,11 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 		}
 	}
 	s.terminal = term
+	// The capture fallback reads this view's screen at Enter: after a history
+	// recall the rendered line is the truth the keystroke mirror cannot see.
+	// The closure captures this terminal, so a reattach that replaces it stops
+	// answering for the old screen — the registration below is refreshed too.
+	s.session.SetSubmittedInputReader(term.SubmittedLine)
 	// The selection named cells of the terminal that was showing; Resume (or a
 	// reattach) brings a different screen and the rows no longer name it.
 	s.liveSelection.Clear()
@@ -936,7 +970,7 @@ func (s *Surface) view(c *ui.Context, focused, explicitFocus bool) ui.Element {
 	s.locale = c.Locale()
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
-	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
+	s.refreshSuggestionsFor(snapshot.Input, snapshot.CWD, snapshot.Command.Running, snapshot.InputScreenSourced, false)
 	model, actions := s.chrome(c, snapshot)
 
 	// FillHeight sizes the surface to the room its Pane gives it, but a
@@ -969,13 +1003,20 @@ func (s *Surface) view(c *ui.Context, focused, explicitFocus bool) ui.Element {
 			// same visual flow; the live terminal is the last element, matching
 			// mygo-flow's Pane layout.
 			termView := s.terminalView(c)
-			// Suggestions float over the terminal at the cursor cell. Building
-			// them after the terminal gives the overlay the terminal's bounds,
-			// and an overlay row never takes room from the grid.
+			// Suggestions float over the terminal at the cursor cell. The anchor
+			// is the cursor row's own box as the Pane laid it out: the grid sits
+			// below the flow's finished blocks, renders only the live tail, and
+			// moves with the scroll, so neither the pane's bounds nor the
+			// terminal's screen-row arithmetic can place it. The box is the
+			// previous frame's layout, one frame behind a resize, which the
+			// placement clamps away. The cursor column still comes from the VT
+			// snapshot: the replay carries the emulator's own cursor position,
+			// so a screen whose scrollback outlives a clear cannot inflate it
+			// the way counting Text's lines did.
 			if (model.ShowAutocomplete || model.ShowGhost) && s.terminal != nil {
 				cols, rows := s.terminal.Size()
-				cursor := autocompleteCursorFromText(s.terminal.Text(), model.Input, cols, rows)
-				autocompleteLayers(c, termView, model, cursor, cols, rows, m, t, actions)
+				cursor := autocompleteCursorFromSnapshot(s.terminal.Snapshot(), model.Input, cols, rows)
+				autocompleteLayers(c, termView, s.liveAnchor, model, cursor, cols, rows, m, t, actions)
 			}
 		}
 		if s.renaming {
@@ -1109,7 +1150,7 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		Observe:     func() { _ = s.OpenObserver() },
 		OpenBrowser: s.openBrowserAction(),
 		AcceptSuggestion: func(index int) {
-			s.acceptSuggestion(index)
+			s.acceptSuggestionClick(index)
 		},
 		ToggleFiles: s.paneActions.ToggleFiles,
 	}
@@ -1420,10 +1461,11 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				// The Pane reports the box it laid its live screen out in.
 				// It is this Surface's own Pane, so the grid computed from it
 				// cannot read a sibling's viewport.
-				Viewport:  s.noteViewport,
-				Focus:     focus,
-				Refocus:   flowRefocus,
-				KeepFocus: s.focused,
+				Viewport:   s.noteViewport,
+				LiveAnchor: &s.liveAnchor,
+				Focus:      focus,
+				Refocus:    flowRefocus,
+				KeepFocus:  s.focused,
 				// A press on a finished command's row or Lens body must not
 				// leave the keyboard there. The block still selects text and
 				// its Native/Raw switch still works; the Session asks for the
@@ -1788,6 +1830,10 @@ func (s *Surface) Hibernate() bool {
 	s.dropOver = false
 	// Closing the terminal closes its ViewConn, which only detaches this
 	// view: the Session, the transport, and the observer feeds stay alive.
+	// Its screen is gone, so the capture fallback must stop reading it — a
+	// hibernated view never answers for the screen, and the recall discard
+	// stands until Resume registers the next view's reader.
+	s.session.SetSubmittedInputReader(nil)
 	_ = s.terminal.Close()
 	s.terminal = nil
 	s.redraw()
@@ -2054,6 +2100,9 @@ func (s *Surface) Close() {
 		s.gate.Cancel()
 		s.drops.Dismiss()
 		if s.terminal != nil {
+			if s.session != nil {
+				s.session.SetSubmittedInputReader(nil)
+			}
 			_ = s.terminal.Close()
 			s.terminal = nil
 		}

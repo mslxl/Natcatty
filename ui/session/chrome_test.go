@@ -10,6 +10,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/terminal/appview"
 )
 
 // TestChromeFitsAtDefaultAndMinimumSizes renders the real status bar and
@@ -289,9 +290,11 @@ func TestAutocompleteLayersFloatAtTheCursor(t *testing.T) {
 		first := rects[suggestions[0].Display]
 		last := rects[suggestions[5].Display]
 		// The input line is the terminal's last cell row, under both layers.
+		// The grid's own padding insets the cells, as it does in the Pane.
 		const toolbarHeight = 30
-		cellHeight := (float32(size[1]) - toolbarHeight - 2*terminalPaddingY) / rows
-		inputTop := toolbarHeight + terminalPaddingY + float32(cursor.Row)*cellHeight
+		_, insetY := appview.LiveGridPadding()
+		cellHeight := (float32(size[1]) - toolbarHeight - 2*insetY) / rows
+		inputTop := toolbarHeight + insetY + float32(cursor.Row)*cellHeight
 		if popup.Y <= toolbarHeight {
 			t.Fatalf("%dx%d put the popup in the chrome: %+v", size[0], size[1], popup)
 		}
@@ -360,7 +363,9 @@ func chromeFrame(c *ui.Context, model chromeModel, m locales.Messages, t *ui.The
 
 // autocompleteFrame draws the Pane toolbar above a terminal-sized target and
 // the floating autocomplete layers, as a Surface does without a native
-// terminal.
+// terminal. The zero grid box exercises the fallback: no frame has recorded
+// the live grid yet, so the pane's bounds stand in, as they do on a real
+// Surface's first frames.
 func autocompleteFrame(c *ui.Context, model chromeModel, cursor autocompleteCursor, rows int) {
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).FillWidth().Height(30).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
@@ -368,7 +373,7 @@ func autocompleteFrame(c *ui.Context, model chromeModel, cursor autocompleteCurs
 			toolbar(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
 		})
 		target := ui.Column(c.Key("autocomplete-target")).Grow(1).FillWidth().MinHeight(0)
-		autocompleteLayers(c, target, model, cursor, 80, rows,
+		autocompleteLayers(c, target, appview.LiveAnchor{}, model, cursor, 80, rows,
 			locales.In(c.Locale()), c.Theme(), chromeActions{})
 	})
 }

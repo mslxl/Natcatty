@@ -160,6 +160,17 @@ func (s *memoryStore) HistoryMetadata(context.Context) (domainhistory.Metadata, 
 	return s.metadata, nil
 }
 
+func (s *memoryStore) SaveHistoryMetadata(_ context.Context, metadata domainhistory.Metadata) error {
+	if s.fail != nil {
+		return s.fail
+	}
+	if s.failWrite != nil {
+		return s.failWrite
+	}
+	s.metadata = metadata
+	return nil
+}
+
 func (s *memoryStore) ImportHostAtuinEntries(_ context.Context, hostID string,
 	checkpoint domainhistory.ImportCheckpoint, entries []domainhistory.Entry) error {
 	if s.fail != nil {
@@ -1698,5 +1709,109 @@ func TestMarkHostAtuinNoticedIsOneTimePerHost(t *testing.T) {
 	other, err := service.MarkHostAtuinNoticed(ctx, "host-2")
 	if err != nil || !other {
 		t.Fatalf("other Host = %t, %v; want true", other, err)
+	}
+}
+
+// TestCleanCorruptedRowsRemovesCaptureArtifactsOnce covers the one-time
+// migration: rows whose command text could never have been typed are
+// soft-deleted with their tombstones, plain commands — however short or odd —
+// stay, and the durable marker makes a second run a no-op even when a new
+// corrupted row arrives later.
+func TestCleanCorruptedRowsRemovesCaptureArtifactsOnce(t *testing.T) {
+	store := &memoryStore{}
+	seed := []domainhistory.Entry{
+		{ID: "ctrl-bytes", Scope: "local", Command: "git st\x07ash", RecordedAt: at(1), Source: domainhistory.SourceSession},
+		{ID: "caret-echo", Scope: "local", Command: "^C^Cc^C", RecordedAt: at(1), Source: domainhistory.SourceSession},
+		{ID: "caret-majority", Scope: "local", Command: "^C^Cz", RecordedAt: at(1), Source: domainhistory.SourceSession},
+		{ID: "real-regex", Scope: "local", Command: "grep '^C' log", RecordedAt: at(1), Source: domainhistory.SourceSession},
+		{ID: "real-short", Scope: "local", Command: "ls", RecordedAt: at(1), Source: domainhistory.SourceSession},
+		{ID: "real-fragment-look", Scope: "local", Command: "g", RecordedAt: at(1), Source: domainhistory.SourceSession},
+		{ID: "real-odd", Scope: "local", Command: ";s", RecordedAt: at(1), Source: domainhistory.SourceSession},
+	}
+	for _, entry := range seed {
+		store.entries = append(store.entries, entry)
+	}
+	service := newTestService(store, Retention{})
+
+	removed, err := service.CleanCorruptedRows(context.Background())
+	if err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+	if removed != 3 {
+		t.Fatalf("removed = %d, want 3", removed)
+	}
+	alive := map[string]bool{}
+	for _, entry := range store.entries {
+		alive[entry.ID] = entry.DeletedAt.IsZero()
+	}
+	for _, id := range []string{"ctrl-bytes", "caret-echo", "caret-majority"} {
+		if alive[id] {
+			t.Errorf("corrupted row %q survived", id)
+		}
+	}
+	for _, id := range []string{"real-regex", "real-short", "real-fragment-look", "real-odd"} {
+		if !alive[id] {
+			t.Errorf("real command row %q was deleted", id)
+		}
+	}
+
+	// The migration is one-time: a corrupted row captured afterwards is the
+	// pipeline's own defect and must not be swept away silently.
+	store.entries = append(store.entries, domainhistory.Entry{
+		ID: "late-corruption", Scope: "local", Command: "^C^Cbad", RecordedAt: at(2),
+		Source: domainhistory.SourceSession,
+	})
+	again, err := service.CleanCorruptedRows(context.Background())
+	if err != nil {
+		t.Fatalf("second clean: %v", err)
+	}
+	if again != 0 {
+		t.Fatalf("second run removed %d rows, want none", again)
+	}
+	for _, entry := range store.entries {
+		if entry.ID == "late-corruption" && !entry.DeletedAt.IsZero() {
+			t.Fatal("the second run deleted a row captured after the migration")
+		}
+	}
+}
+
+// TestCorruptedKeepsOrdinaryShellText pins the predicate against the commands
+// a real journal holds, so the migration can never mistake them for capture
+// artifacts.
+func TestCorruptedKeepsOrdinaryShellText(t *testing.T) {
+	corrupted := []string{
+		"git st\x07ash",     // a bell byte from the echo
+		"ls\x1b[A",          // a raw escape byte
+		"echo\x7f",          // a delete byte
+		"^C^Cc^C",           // interrupt echo
+		"^C^Cz",             // echo with a trailing typed letter
+		"^C",                // a lone interrupt echo
+		"^[^C",              // escape-key echo
+	}
+	for _, command := range corrupted {
+		if !domainhistory.Corrupted(command) {
+			t.Errorf("Corrupted(%q) = false, want true", command)
+		}
+	}
+	ordinary := []string{
+		"ls", "g", "t", "5", ";s", "la", "ip", "rg", // short real commands and fragment lookalikes
+		"grep '^C' log",      // a regex anchor inside quotes
+		"sed 's/^A/b/' file", // a substitution pattern
+		"echo ^C",            // caret notation not at the start is too weak alone
+		"git commit -m '^WIP'", // a message that starts with a caret inside the line
+		"cd ~/repos",
+		"echo hello",
+		// A filesystem name is raw bytes: cd into a directory whose name is
+		// not valid UTF-8 records such a row, and the user really ran it.
+		"cd OneDrive/怃\xbd修",
+		// A quoted string spans lines; the hook records the multi-line
+		// command the shell really ran.
+		"echo \"one\ntwo\"",
+		"echo multi_one \\\nmulti_two",
+	}
+	for _, command := range ordinary {
+		if domainhistory.Corrupted(command) {
+			t.Errorf("Corrupted(%q) = true, want false", command)
+		}
 	}
 }

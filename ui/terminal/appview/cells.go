@@ -143,6 +143,32 @@ func CellSize() (w, h float32) { return cellWidth, cellHeight }
 // not decide this Pane's grid.
 type Viewport struct{ W, H float32 }
 
+// CellGeometry is the measured cell as one value, for callers that position
+// an overlay over the live grid. Zero values mean no frame has measured the
+// cell yet.
+type CellGeometry struct {
+	W, H float32
+}
+
+// LiveGridCell is the cell the live grid is painted with this frame. The
+// overlay that anchors at a grid cell uses it rather than estimating from the
+// pane's box, which is larger than the grid by the pane's insets.
+func LiveGridCell() CellGeometry { return CellGeometry{W: cellWidth, H: cellHeight} }
+
+// LiveGridInset is where the live grid's first cell starts inside the pane
+// element, in DIPs: the flow's vertical margin plus the live box's own
+// padding. It is exact only when no finished blocks precede the grid — the
+// grid moves down as the flow gains them — so an overlay that has the grid's
+// own box uses LiveGridPadding against that box instead. It is exported for
+// the same overlay positioning LiveGridCell serves.
+func LiveGridInset() (x, y float32) { return flowPadY + livePad, flowPadY + livePad }
+
+// LiveGridPadding is where the live grid's first cell starts inside the grid's
+// own border box, in DIPs: the rounded background's padding ring on every
+// side. Overlay positioning that has the grid's box strips this to reach the
+// cells.
+func LiveGridPadding() (x, y float32) { return livePad, livePad }
+
 // GridFor is the cell grid a Pane's own viewport has room for: the measured
 // monospace cell divides the room the live screen gets. A terminal sizes itself
 // to its pane, because a fixed grid wraps a line where the reader sees no edge

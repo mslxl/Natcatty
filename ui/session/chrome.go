@@ -12,6 +12,7 @@ import (
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/terminal/appview"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
@@ -55,7 +56,7 @@ type chromeModel struct {
 	CanReconnect bool
 
 	// Input is the line being typed. Suggestions are the autocomplete rows for
-	// it, with SuggestionIndex selecting the row Tab accepts.
+	// it, with SuggestionIndex marking the row the arrows have selected.
 	Input            string
 	Suggestions      []autocomplete.Suggestion
 	SuggestionIndex  int
@@ -199,17 +200,29 @@ func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, 
 }
 
 // autocompleteLayers floats the suggestion popup and the ghost hint over the
-// terminal, anchored at the cursor cell. They are Overlay children, so showing
-// or hiding them never changes the terminal's size. target is the terminal
-// view; its bounds are the previous frame's, one frame behind a resize, which
-// the placement clamps away.
-func autocompleteLayers(c *ui.Context, target ui.Element, model chromeModel, cursor autocompleteCursor, cols, rows int, m locales.Messages, t *ui.Theme, actions chromeActions) {
-	bounds := target.Bounds()
-	if bounds.W <= 0 || bounds.H <= 0 {
+// terminal, anchored at the cursor row. They are Overlay children, so showing
+// or hiding them never changes the terminal's size. The anchor is the Pane's
+// own record of where it drew the cursor row — one frame behind a resize,
+// which the placement clamps away — because the terminal's screen-row
+// arithmetic cannot place it: the grid sits below the flow's finished blocks
+// and renders only the live tail, so the cursor's screen row counts down rows
+// the box does not show. The list floats over the flow's whole box, blocks
+// and grid together, as the original floats it over the terminal's screen.
+// Before the first recorded frame (or a hibernated grid) the cursor row falls
+// back to the screen-row arithmetic inside the placement, exact for the empty
+// flow that implies.
+func autocompleteLayers(c *ui.Context, target ui.Element, anchor appview.LiveAnchor, model chromeModel, cursor autocompleteCursor, cols, rows int, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	viewport := target.Bounds()
+	if viewport.W <= 0 || viewport.H <= 0 {
 		return
 	}
-	placement := placeAutocomplete(bounds, cursor, cols, rows, len(model.Suggestions),
-		model.ShowAutocomplete, model.ShowGhost && model.GhostText != "")
+	cursorRow := anchor.CursorRow
+	if !anchor.HasCursor {
+		cursorRow = ui.Rect{}
+	}
+	placement := placeAutocomplete(viewport, cursorRow, cursor, cols, rows, len(model.Suggestions),
+		model.ShowAutocomplete, model.ShowGhost && model.GhostText != "",
+		appview.LiveGridCell())
 	if !placement.ShowPopup && !placement.ShowGhost {
 		return
 	}
@@ -225,7 +238,7 @@ func autocompleteLayers(c *ui.Context, target ui.Element, model chromeModel, cur
 
 // autocompletePopup lists the matching commands at the placement. It shows as
 // many rows as fit; the window of rows scrolls so the selected row stays
-// visible, and the marked row is the one Tab accepts.
+// visible, and the marked row is the one the live preview renders.
 func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions, placement autocompletePlacement) {
 	rows := min(placement.Rows, len(model.Suggestions))
 	if rows <= 0 {

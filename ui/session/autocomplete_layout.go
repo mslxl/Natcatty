@@ -6,6 +6,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"golang.org/x/text/width"
+
+	"github.com/mslxl/natcatty/ui/terminal/appview"
 )
 
 // The autocomplete list floats over the terminal instead of taking rows above
@@ -24,8 +26,9 @@ const (
 	autocompleteGhostHeight  = 18
 	autocompleteMaxWidth     = 560
 	// terminalPaddingX and terminalPaddingY are MyGo's default grid padding
-	// (terminal.Options.Padding left zero), in DIPs. The cursor cell is
-	// measured from the padding box, so they place the list beside it.
+	// (terminal.Options.Padding left zero), in DIPs. They are the fallback
+	// estimate for a terminal whose own cell size is not known; the pane's
+	// measured cell replaces them whenever a frame has been drawn.
 	terminalPaddingX = 6
 	terminalPaddingY = 4
 )
@@ -52,12 +55,52 @@ type autocompletePlacement struct {
 	ShowGhost bool
 }
 
+// autocompleteCursorFromSnapshot locates the cursor cell from the terminal's
+// VT snapshot and the line being typed. The snapshot is the emulator's own
+// state, so the cursor cell is authoritative: unlike the terminal's Text,
+// which mixes scrollback and screen rows indistinguishably, the replay carries
+// the cursor escape itself and never confuses a clear that left scrollback in
+// place for a screen full of output. The row is the cursor's screen row, not
+// its replay row: a clear that merged output into scrollback leaves the prompt
+// at the screen's top, and anchoring at the replay row — which counts the
+// scrollback in — drops the popup to the bottom of the window or off it. The
+// command's first row is derived from the typed input: a shell keeps the
+// cursor at the end of the typed line, so the rows the input wraps over count
+// back from the cursor's row.
+func autocompleteCursorFromSnapshot(snapshot []byte, input string, cols, rows int) autocompleteCursor {
+	if cols < 1 {
+		cols = 80
+	}
+	if rows < 1 {
+		rows = 24
+	}
+	col, row, ok := appview.CursorScreenCell(snapshot, appview.Size{Cols: cols, Rows: rows})
+	if !ok {
+		return autocompleteCursor{}
+	}
+	// The command being typed starts inputRows above the cursor: the rows the
+	// tracked input wraps onto after the first. A keystroke that has not
+	// echoed yet leaves both the snapshot cursor and the anchor one cell
+	// behind for a frame; the echo catches up on the next output and the
+	// anchor corrects itself, which the debounced popup absorbs.
+	inputRows := 0
+	if width := autocompleteCellWidth(input); width > 0 {
+		inputRows = (width - 1) / cols
+	}
+	cursor := autocompleteCursor{
+		Row:      min(max(row, 0), rows-1),
+		StartRow: min(max(row-inputRows, 0), rows-1),
+		Column:   min(max(col, 0), cols-1),
+	}
+	return cursor
+}
+
 // autocompleteCursorFromText locates the cursor cell from the terminal's text
-// and the line being typed. MyGo's terminal does not expose its cursor, but a
-// shell keeps the cursor at the end of the typed line, so the last line and
-// its width place both the cursor and the start of the command. Text includes
-// scrollback; counting from the bottom of the screen keeps the row in the
-// viewport when output has scrolled.
+// and the line being typed, the fallback for a terminal whose snapshot cannot
+// be replayed. The last line and its width place both the cursor and the
+// start of the command, with the screen-full assumption the old behaviour
+// always made: correct for a contiguous screen, inflated when a clear leaves
+// scrollback above an unfilled screen.
 func autocompleteCursorFromText(text, input string, cols, rows int) autocompleteCursor {
 	if cols < 1 {
 		cols = 80
@@ -172,40 +215,84 @@ func autocompleteAssemblyHeight(popupRows int, ghost bool) float32 {
 // placeAutocomplete decides where the floating layers go. It mirrors the
 // original's cursor-anchored placement: prefer below the input line, flip up
 // when the list cannot fit below and above is the better side, shrink the
-// list to the room actually available, then clamp into the terminal's screen.
-func placeAutocomplete(bounds ui.Rect, cursor autocompleteCursor, cols, rows, suggestions int, popup, ghost bool) autocompletePlacement {
-	width := min(bounds.W-2*terminalPaddingX, autocompleteMaxWidth)
-	cellW, cellH := autocompleteCellSize(bounds, cols, rows)
+// list to the room actually available, then clamp inside the terminal's
+// visible area.
+//
+// The anchor is visual, not derived from the terminal's screen rows. The live
+// grid is not the terminal's full screen: the flow crops the rows above the
+// current prompt into finished blocks and trims the blank rows below the
+// cursor, so the cursor's screen row no longer counts down the rows the grid
+// shows — the arithmetic that anchored top-down displaced the popup by the
+// cropped rows, which put it over the finished blocks at the pane's top
+// instead of beside the prompt. The Pane draws the cursor row, so its box is
+// exact: cursorRow is that box in window coordinates. viewport is the visible
+// area the list may float over — the flow's own box, blocks and grid together,
+// because the list is an overlay and covering a finished block behind it is
+// what floating means; the grid alone is often a single row tall, far too
+// small to hold the list. gridCell is the measured cell the pane paints its
+// rows with; a zero cell falls back to dividing the viewport by the grid, the
+// estimate the plugin's padding assumptions make, and a zero cursorRow (no
+// frame captured yet) falls back to the arithmetic the screen rows imply,
+// exact only for an empty flow.
+func placeAutocomplete(viewport ui.Rect, cursorRow ui.Rect, cursor autocompleteCursor, cols, rows, suggestions int, popup, ghost bool, gridCell appview.CellGeometry) autocompletePlacement {
+	cellW, cellH := gridCell.W, gridCell.H
+	insetX, insetY := appview.LiveGridPadding()
+	if cellW <= 0 || cellH <= 0 {
+		cellW, cellH = autocompleteCellSize(viewport, cols, rows)
+	}
+	width := min(viewport.W-2*insetX, autocompleteMaxWidth)
 	if width <= 0 || cellW <= 0 || cellH <= 0 {
 		return autocompletePlacement{}
 	}
-	screenLeft := bounds.X + terminalPaddingX
-	screenRight := bounds.X + bounds.W - terminalPaddingX
-	screenTop := bounds.Y + terminalPaddingY
-	screenBottom := bounds.Y + bounds.H - terminalPaddingY
+	screenLeft := viewport.X + insetX
+	screenRight := viewport.X + viewport.W - insetX
+	screenTop := viewport.Y + insetY
+	screenBottom := viewport.Y + viewport.H - insetY
+
+	// The input line's vertical span. The cursor row's box is exact when the
+	// Pane has captured one; the command's first row sits inputRows above it
+	// because the rows a wrapped input occupies count back from the cursor.
+	rowTop, rowBottom := cursorRow.Y, cursorRow.Y+cursorRow.H
+	rowCellH := cellH
+	if cursorRow.H <= 0 {
+		// No captured row yet: the first frames of an empty flow, where the
+		// grid fills the viewport and the screen's rows spread across it. The
+		// cell that arithmetic needs is the viewport divided by the grid —
+		// not the measured cell, which sizes one rendered row of the cropped
+		// tail and bears no relation to where screen row N sits in the box.
+		_, rowCellH = autocompleteCellSize(viewport, cols, rows)
+		rowTop = screenTop + float32(cursor.Row)*rowCellH
+		rowBottom = rowTop + rowCellH
+	}
+	inputRows := max(cursor.Row-cursor.StartRow, 0)
+	inputTop := rowTop - float32(inputRows)*rowCellH
+
+	// The space beside the input is what the visible area shows above the
+	// command's first row and below the cursor's row. The list may cover the
+	// finished blocks behind it — it floats — so the room is measured against
+	// the flow's box, not the live grid's. At a shell prompt the cursor sits
+	// at the bottom of the visible screen, so the space below is small and
+	// the list opens upward beside the prompt.
+	spaceAbove := max(inputTop-screenTop, 0)
+	spaceBelow := max(screenBottom-rowBottom, 0)
 
 	wantRows := 0
 	if popup {
 		wantRows = min(suggestions, maxVisibleSuggestions)
 	}
-	upwardRow := min(cursor.StartRow, cursor.Row)
-	downwardRow := max(cursor.StartRow, cursor.Row)
-	spaceAbove := float32(upwardRow) * cellH
-	spaceBelow := float32(max(rows-downwardRow-1, 0)) * cellH
-
 	want := autocompleteAssemblyHeight(wantRows, ghost)
 	upward := false
 	switch {
 	case spaceBelow >= want:
 	case spaceAbove >= want:
 		upward = true
-	case cursor.Row > 2 && spaceAbove >= spaceBelow:
+	case spaceAbove >= spaceBelow:
 		upward = true
 	}
 
-	anchorRow, space := cursor.Row, spaceBelow
+	space := spaceBelow
 	if upward {
-		anchorRow, space = upwardRow, spaceAbove
+		space = spaceAbove
 	}
 	available := space - autocompleteAnchorGap
 	fitRows := wantRows
@@ -217,22 +304,37 @@ func placeAutocomplete(bounds ui.Rect, cursor autocompleteCursor, cols, rows, su
 	}
 	assemblyHeight := autocompleteAssemblyHeight(fitRows, ghost)
 
-	anchorTop := screenTop + float32(anchorRow)*cellH
-	anchorBottom := anchorTop + cellH
 	var top float32
 	if upward {
-		top = anchorTop - autocompleteAnchorGap - assemblyHeight
+		top = inputTop - autocompleteAnchorGap - assemblyHeight
 		if top < screenTop {
 			top = screenTop
 		}
+		// The anchor moves with the scroll: a reader scrolling toward the
+		// start carries the input line down past the viewport's end, and the
+		// upward placement would otherwise follow it out — floating over
+		// whatever sits below the terminal rather than over the flow. Clamp
+		// the assembly into the visible area, as the downward side does.
+		if top+assemblyHeight > screenBottom {
+			top = max(screenBottom-assemblyHeight, screenTop)
+		}
 	} else {
-		top = anchorBottom + autocompleteAnchorGap
+		top = rowBottom + autocompleteAnchorGap
 		if top+assemblyHeight > screenBottom {
 			top = max(screenBottom-assemblyHeight, screenTop)
 		}
 	}
 
-	anchorLeft := screenLeft + float32(cursor.Column)*cellW
+	// Horizontally the cursor column counts cells from the grid's content
+	// left edge. The captured row's left is exactly that edge — it is the
+	// grid's own box, inset — so the column lands on the cursor's cell rather
+	// than on an estimate from the flow's box, whose padding differs from the
+	// grid's by the flow's margins.
+	gridLeft := cursorRow.X
+	if cursorRow.H <= 0 {
+		gridLeft = screenLeft
+	}
+	anchorLeft := gridLeft + float32(cursor.Column)*cellW
 	left := min(max(anchorLeft, screenLeft), screenRight-width)
 
 	placement := autocompletePlacement{

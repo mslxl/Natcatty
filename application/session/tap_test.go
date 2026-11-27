@@ -871,3 +871,108 @@ func TestTapFinalizePendingIsExactlyOnceUnderConcurrency(t *testing.T) {
 		t.Fatalf("concurrent finalizers produced %d completions, want 1", completions)
 	}
 }
+
+// TestTapHistoryRecallRecordsNothing is the stop-loss for the garbled-history
+// defect: Up/Down recall in the line editor replaces the buffer with a
+// history entry the tap never sees, so whatever the tap holds after it is a
+// hybrid of typed and recalled text. Recording that hybrid at Enter wrote
+// commands that never ran — the rows autocomplete later offered as garbage.
+// The capture is discarded instead: no row is better than a wrong row.
+func TestTapHistoryRecallRecordsNothing(t *testing.T) {
+	for _, recall := range []struct {
+		name string
+		keys string
+	}{
+		{"up arrow", "\x1b[A"},
+		{"down arrow", "\x1b[B"},
+		{"ctrl+P", "\x10"},
+		{"ctrl+N", "\x0e"},
+		{"ctrl+R reverse search", "\x12"},
+		{"ctrl+W word kill", "\x17"},
+		{"ctrl+Y yank", "\x19"},
+		{"ctrl+T transpose", "\x14"},
+	} {
+		t.Run(recall.name, func(t *testing.T) {
+			tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+			tap.handleInput([]byte("git st"), tapAt(0))
+			tap.handleInput([]byte(recall.keys), tapAt(time.Second))
+			_, _, started, completions, _ := tap.handleInput([]byte("\r"), tapAt(2*time.Second))
+			if started {
+				t.Fatalf("%s then Enter started a capture of the hybrid line", recall.name)
+			}
+			if len(completions) != 0 {
+				t.Fatalf("%s then Enter emitted %+v", recall.name, completions)
+			}
+			if state := tap.state(tapAt(2 * time.Second)); state.Command.Running {
+				t.Fatalf("%s then Enter marked a command running: %+v", recall.name, state.Command)
+			}
+		})
+	}
+}
+
+// TestTapPlainTypingAfterNothingRecallableStillRecords guards the other half:
+// a capture with no untraceable edit must record exactly as before, and the
+// re-arm after the discarded line must not leak into the next command.
+func TestTapPlainTypingAfterNothingRecallableStillRecords(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("git status"), tapAt(0))
+	_, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(time.Second))
+	if !started {
+		t.Fatal("a plain typed command did not start a capture")
+	}
+	if got := tap.state(tapAt(time.Second)).Command.Text; got != "git status" {
+		t.Fatalf("command text = %q", got)
+	}
+}
+
+// TestTapCtrlCReArmsAfterARecall proves the discard is per-line: Ctrl+C clears
+// the editor's line, so input typed after it is fully traceable again.
+func TestTapCtrlCReArmsAfterARecall(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("git st"), tapAt(0))
+	tap.handleInput([]byte("\x1b[A"), tapAt(time.Second))
+	tap.handleInput([]byte{0x03}, tapAt(2*time.Second))
+	tap.handleInput([]byte("ls\r"), tapAt(3*time.Second))
+	if got := tap.state(tapAt(3 * time.Second)).Command.Text; got != "ls" {
+		t.Fatalf("command after Ctrl+C = %q, want %q", got, "ls")
+	}
+}
+
+// TestTapEnterReArmsAfterADiscardedLine proves the invalid state does not
+// outlive the line it belongs to: the Enter that discards the hybrid re-arms
+// the tap, and the next line captures normally.
+func TestTapEnterReArmsAfterADiscardedLine(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("git st"), tapAt(0))
+	tap.handleInput([]byte("\x1b[A"), tapAt(time.Second))
+	tap.handleInput([]byte("\r"), tapAt(2*time.Second))
+	tap.handleInput([]byte("ls -la\r"), tapAt(3*time.Second))
+	state := tap.state(tapAt(3 * time.Second))
+	if state.Command.Text != "ls -la" || !state.Command.Running {
+		t.Fatalf("the line after the discarded one did not capture: %+v", state.Command)
+	}
+}
+
+// TestTapBracketedPasteDoesNotReadKeys proves the paste gate covers the whole
+// sequence: text pasted into the line editor may itself contain what looks
+// like a cursor or recall key, and the editor inserts it literally. Reading
+// it as a key would move the tracked cursor wrongly, and reading Up as a
+// recall would discard a paste the tap can trace exactly.
+func TestTapBracketedPasteDoesNotReadKeys(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	// DEC 2004 is on: the shell wraps the paste, and inside it a byte string
+	// shaped like the Up recall is text, not a key.
+	tap.handleInput([]byte("echo "), tapAt(0))
+	tap.handleInput([]byte("\x1b[200~before\x1b[Aafter\x1b[201~"), tapAt(time.Second))
+	tap.handleInput([]byte(" tail\r"), tapAt(2*time.Second))
+	state := tap.state(tapAt(2 * time.Second))
+	if !state.Command.Running {
+		t.Fatalf("the paste's embedded recall bytes discarded the capture: %+v", state.Command)
+	}
+	// The control bytes never join the tracked line — the input filter takes
+	// printable text — so the command is the printable paste content around
+	// them, exactly as the editor shows it.
+	if got := state.Command.Text; got != "echo beforeafter tail" {
+		t.Fatalf("command text = %q, want the pasted text without its escape bytes", got)
+	}
+}

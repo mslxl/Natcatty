@@ -56,8 +56,8 @@ func (s *Surface) InsertText(text string) error {
 // erases and the insertion are queued in one write, and only after the text
 // has passed the sanitizer and bracketed-paste check: an unsafe multi-line
 // text is refused before any erasure, so the typed prefix is left intact and
-// nothing is submitted. It is the autocomplete acceptance seam; both the Tab
-// and popup-click paths use it.
+// nothing is submitted. It is the autocomplete write seam; the live preview,
+// its revert, the ghost's tail, and the popup click all write through it.
 func (s *Surface) insertTextReplacing(eraseCount int, text string) error {
 	payload, err := s.insertPayload(text)
 	if err != nil {

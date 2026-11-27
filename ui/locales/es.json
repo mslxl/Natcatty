@@ -1171,7 +1171,7 @@
   "sessionTransferActive": "Se detectó una transferencia {kind}. Los datos del protocolo están bloqueados.",
   "sessionStatsLabel": "Estadísticas de la sesión",
   "sessionAutocompleteLabel": "Sugerencias de comandos",
-  "sessionAutocompleteHint": "Tab para aceptar · Esc para descartar",
+  "sessionAutocompleteHint": "↑↓ para previsualizar · Enter acepta · Esc revierte",
   "sessionAutocompleteHistory": "Historial",
   "sessionAutocompleteGhost": "Sugerencia: {suggestion}",
   "sessionAutocompleteFrequency": "×{count}",

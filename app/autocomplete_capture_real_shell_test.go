@@ -2,18 +2,22 @@
 
 package app
 
-// Regressions for "Tab inserts a literal tab". The reported flow was a local
-// zsh Session: the planned capture hook was replaced by the Lens OSC 133
+// Regressions for the reported completion flow. The original bug was a local
+// zsh Session whose planned capture hook was replaced by the Lens OSC 133
 // integration, so the tap kept reserving every typed command for a handshake
-// that never came. The command reached history only when the Session closed,
-// the autocomplete service stayed empty while the user typed, and Tab had no
-// suggestion to accept, so the Pane forwarded the byte to the shell.
+// that never came: the command reached history only when the Session closed,
+// the autocomplete service stayed empty while the user typed, and pressing Tab
+// found nothing to offer. The capture pipeline now publishes the command while
+// the Session stays open, and the keymap is the original's: the popup opens on
+// its own once the debounce passes, arrowing onto a row live-renders the
+// candidate into the shell's real line, Enter — never intercepted — runs it,
+// and Tab always belongs to the shell's own completion.
 //
 // These tests open the same local shell through the production adapters and
 // capture hook, wire the production completion hook into a real
 // autocomplete.Service, and drive the Surface keys: type a command, run it,
-// type its prefix, press Tab. The Tab must replace the line while the Session
-// is still open — not after a closer that these tests never perform.
+// type its prefix, steer the popup — all while the Session is still open, not
+// after a closer that these tests never perform.
 
 import (
 	"context"
@@ -63,6 +67,30 @@ func (j *captureJournal) Record(_ context.Context, entry domainhistory.Entry) er
 	return nil
 }
 
+// countCommand is how many journal rows hold exactly this command text.
+func (j *captureJournal) countCommand(command string) int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	n := 0
+	for _, entry := range j.entries {
+		if entry.Command == command {
+			n++
+		}
+	}
+	return n
+}
+
+// commands is the journal's command texts, for diagnostics.
+func (j *captureJournal) commands() []string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	out := make([]string, len(j.entries))
+	for i, entry := range j.entries {
+		out[i] = entry.Command
+	}
+	return out
+}
+
 // captureShell is a real zsh Session wired to the production capture hook, the
 // production completion hook and a real autocomplete service, rendered through
 // the Surface.
@@ -71,6 +99,7 @@ type captureShell struct {
 	surface *sessionui.Surface
 	tester  *ui.Tester
 	service *autocomplete.Service
+	journal *captureJournal
 }
 
 // openCaptureShell starts a zsh Session and focuses the terminal. delayMs is
@@ -182,7 +211,7 @@ func openCaptureShellNamed(t *testing.T, name string, delayMs int) *captureShell
 	// Focus the terminal so the Pane takes the production key path.
 	tester.ClickAt(450, 560)
 
-	return &captureShell{session: session, surface: surface, tester: tester, service: autocompleteService}
+	return &captureShell{session: session, surface: surface, tester: tester, service: autocompleteService, journal: journal}
 }
 
 // runCaptureCommand types the command, runs it and waits until the capture is
@@ -237,12 +266,12 @@ func (s *captureShell) waitForCommandHeader(t *testing.T) int {
 }
 
 // runAcceptedLine proves the shell received the completed line by running it a
-// second time; the marker count is the count of executions.
+// second time; the marker-output count is the count of executions.
 func (s *captureShell) runAcceptedLine(t *testing.T, markerCount int) {
 	t.Helper()
 	s.tester.Key(0, ui.KeyEnter)
 	if !realShellWait(t, func() bool {
-		return strings.Count(s.surface.ScreenText(), captureMarker) >= markerCount &&
+		return markerOutputRuns(s.surface.ScreenText()) >= markerCount &&
 			!s.session.Snapshot().Command.Running
 	}) {
 		t.Fatalf("the accepted command did not run: screen %q command %+v",
@@ -250,39 +279,103 @@ func (s *captureShell) runAcceptedLine(t *testing.T, markerCount int) {
 	}
 }
 
-// TestTabAcceptsACapturedCommandWhileTheSessionIsOpen is the end-to-end guard
-// for the reported literal tab.
-func TestTabAcceptsACapturedCommandWhileTheSessionIsOpen(t *testing.T) {
+// markerOutputRuns counts executions by their output lines: a line that is the
+// bare marker. A substring count cannot do the job — the echoed command also
+// contains the marker text, and whether the echo of the line being typed has
+// landed yet is a race the test must not depend on. The output row is the one
+// line that holds the marker alone.
+func markerOutputRuns(screen string) int {
+	runs := 0
+	for line := range strings.Lines(screen) {
+		if strings.TrimRight(strings.TrimRight(line, "\n"), " ") == captureMarker {
+			runs++
+		}
+	}
+	return runs
+}
+
+// TestPopupPreviewAcceptsACapturedCommandWhileTheSessionIsOpen is the
+// end-to-end guard for accepting a journal row in a real shell: the popup
+// opens on its own once the debounce passes, arrowing into the row live-
+// renders the candidate into the real command line, and Enter — never
+// intercepted — runs it.
+func TestPopupPreviewAcceptsACapturedCommandWhileTheSessionIsOpen(t *testing.T) {
 	shell := openCaptureShell(t, 0)
 	shell.runCaptureCommand(t)
 
-	// The prefix opens the popup from the journal row alone; nothing in this
-	// test supplies a suggestion by hand.
 	beforePopup := shell.waitForCommandHeader(t)
 	shell.tester.Type(capturePrefix)
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == capturePrefix }) {
 		t.Fatalf("the typed line is %q, want %q", shell.session.Snapshot().Input, capturePrefix)
 	}
-	pumpTUIFrames(shell.tester, 300*time.Millisecond)
-	if got := shell.commandTextCount(); got <= beforePopup {
-		t.Fatalf("no suggestion popup for the captured command (%d → %d occurrences): %v",
-			beforePopup, got, shell.tester.Texts())
+	// The popup is automatic: once the debounce passes the row appears without
+	// any key — one more occurrence of the command's text than the header.
+	if !realShellWait(t, func() bool { return shell.commandTextCount() > beforePopup }) {
+		pumpTUIFrames(shell.tester, 100*time.Millisecond)
+		if !realShellWait(t, func() bool { return shell.commandTextCount() > beforePopup }) {
+			t.Fatalf("the popup never opened after the debounce (%d occurrences): %v",
+				shell.commandTextCount(), shell.tester.Texts())
+		}
 	}
 
-	before := strings.Count(shell.surface.ScreenText(), captureMarker)
-	shell.tester.Key(0, ui.KeyTab)
+	// Arrow down onto the row: the live preview writes the candidate into the
+	// shell's real line — no acceptance key, no submit, the line simply becomes
+	// the command.
+	shell.tester.Key(0, ui.KeyDown)
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == captureCommand }) {
-		t.Fatalf("Tab left the line as %q, want %q — the byte went to the shell",
+		t.Fatalf("the live preview left the line as %q, want %q",
 			shell.session.Snapshot().Input, captureCommand)
 	}
-	shell.runAcceptedLine(t, before+2)
+
+	before := markerOutputRuns(shell.surface.ScreenText())
+	shell.runAcceptedLine(t, before+1)
 }
 
-// TestTabAcceptsACapturedCommandInARealBash runs the same end-to-end flow
-// against bash, the shell the reported Session ran: bash hands the typed line
-// to the capture hook from its history inside the DEBUG trap, a different path
-// than zsh's zle, and Tab must still replace the line instead of leaving a tab.
-func TestTabAcceptsACapturedCommandInARealBash(t *testing.T) {
+// TestTabPassesThroughToTheShellInARealShell guards the original's #1005
+// parity: natcatty's popup never intercepts Tab. With the popup open, Tab
+// closes the list and the byte reaches the shell — whose own completion, not
+// natcatty's rows, answers it. zsh cannot complete the capture prefix (no such
+// command or file), so the line keeps the typed text: the proof the byte went
+// to the shell is that the popup closed and nothing was inserted from the
+// rows.
+func TestTabPassesThroughToTheShellInARealShell(t *testing.T) {
+	shell := openCaptureShell(t, 0)
+	shell.runCaptureCommand(t)
+
+	beforePopup := shell.waitForCommandHeader(t)
+	shell.tester.Type(capturePrefix)
+	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == capturePrefix }) {
+		t.Fatalf("the typed line is %q, want %q", shell.session.Snapshot().Input, capturePrefix)
+	}
+	if !realShellWait(t, func() bool { return shell.commandTextCount() > beforePopup }) {
+		pumpTUIFrames(shell.tester, 100*time.Millisecond)
+		if !realShellWait(t, func() bool { return shell.commandTextCount() > beforePopup }) {
+			t.Fatalf("the popup never opened after the debounce: %v", shell.tester.Texts())
+		}
+	}
+
+	shell.tester.Key(0, ui.KeyTab)
+	pumpTUIFrames(shell.tester, 200*time.Millisecond)
+	// The popup yields to the shell's completion: the list closes, and the line
+	// is the typed prefix still — zsh has nothing to complete it to, and
+	// natcatty's row must not have been inserted either way.
+	if got := shell.commandTextCount(); got != beforePopup {
+		t.Fatalf("Tab did not close the popup for the shell (%d → %d occurrences): %v",
+			beforePopup+1, got, shell.tester.Texts())
+	}
+	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == capturePrefix }) {
+		t.Fatalf("Tab left the line as %q — either natcatty's row was inserted instead of the shell answering, or the line was clobbered",
+			shell.session.Snapshot().Input)
+	}
+}
+
+// TestPopupPreviewAcceptsACapturedCommandInARealBash runs the same end-to-end
+// flow against bash, the shell the reported Session ran: bash hands the typed
+// line to the capture hook from its history inside the DEBUG trap, a different
+// path than zsh's zle, and the live preview must still land the candidate in
+// the line.
+func TestPopupPreviewAcceptsACapturedCommandInARealBash(t *testing.T) {
+
 	shell := openCaptureShellNamed(t, "bash", 0)
 	shell.runCaptureCommand(t)
 
@@ -291,19 +384,110 @@ func TestTabAcceptsACapturedCommandInARealBash(t *testing.T) {
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == capturePrefix }) {
 		t.Fatalf("the typed line is %q, want %q", shell.session.Snapshot().Input, capturePrefix)
 	}
-	pumpTUIFrames(shell.tester, 300*time.Millisecond)
-	if got := shell.commandTextCount(); got <= beforePopup {
-		t.Fatalf("no suggestion popup for the captured command (%d → %d occurrences): %v",
-			beforePopup, got, shell.tester.Texts())
+	if !realShellWait(t, func() bool { return shell.commandTextCount() > beforePopup }) {
+		pumpTUIFrames(shell.tester, 100*time.Millisecond)
+		if !realShellWait(t, func() bool { return shell.commandTextCount() > beforePopup }) {
+			t.Fatalf("the popup never opened after the debounce in bash: %v", shell.tester.Texts())
+		}
 	}
 
-	before := strings.Count(shell.surface.ScreenText(), captureMarker)
-	shell.tester.Key(0, ui.KeyTab)
+	shell.tester.Key(0, ui.KeyDown)
 	if !realShellWait(t, func() bool { return shell.session.Snapshot().Input == captureCommand }) {
-		t.Fatalf("Tab left the line as %q, want %q — the byte went to the shell",
+		t.Fatalf("the live preview left the line as %q, want %q",
 			shell.session.Snapshot().Input, captureCommand)
 	}
-	shell.runAcceptedLine(t, before+2)
+
+	before := markerOutputRuns(shell.surface.ScreenText())
+	shell.runAcceptedLine(t, before+1)
+}
+
+// TestRecallRecordsTheRenderedCommand is the end-to-end guard for the screen
+// capture fallback. A history recall rewrites the line invisibly to the
+// keystroke mirror: the user types a command, runs it, presses Up so zsh
+// repaints it on the prompt, and runs it again. The mirror saw only the Up
+// arrow, so before the fallback the second execution captured nothing (the
+// hybrid discard). Now the tap reads the rendered line at Enter, and the
+// recalled command reaches the journal a second time — correct, not dropped,
+// not a hybrid.
+func TestRecallRecordsTheRenderedCommand(t *testing.T) {
+	testRecallRecordsTheRenderedCommand(t, openCaptureShell(t, 0))
+}
+
+// TestRecallRecordsTheRenderedCommandInBash runs the recall flow against bash,
+// whose readline repaints the recalled line just as zsh's zle does. The capture
+// fallback must read the rendered line in either shell.
+//
+// It is skipped: a real bash session's prompt rows are not marked with the OSC
+// 133 prompt semantics ghostty exposes, so there is no trustworthy line to read
+// (Terminal.SubmittedLine reports not-ok). zsh rows are marked; bash's are not,
+// even though the integration emits the same A/B marks in both. That marking
+// gap is independent of the recall fallback — it decides whether any screen
+// read is possible at all — so it is tracked separately (ticket 04), and the
+// recall capture in bash degrades to the safe discard exactly as it did before
+// this feature. The skip lifts when the marking gap closes.
+func TestRecallRecordsTheRenderedCommandInBash(t *testing.T) {
+	t.Skip("bash prompt rows are not OSC 133-marked, so no trustworthy line exists to read; the recall degrades to the discard")
+	testRecallRecordsTheRenderedCommand(t, openCaptureShellNamed(t, "bash", 0))
+}
+
+func testRecallRecordsTheRenderedCommand(t *testing.T, shell *captureShell) {
+	t.Helper()
+	shell.runCaptureCommand(t) // first execution: journal count 1
+
+	if got := shell.journal.countCommand(captureCommand); got != 1 {
+		t.Fatalf("after the first run the journal holds %d rows of %q, want 1: %v",
+			got, captureCommand, shell.journal.commands())
+	}
+
+	// Press Up once: the shell recalls the last command onto the line. The
+	// keystroke mirror sees only the arrow; the line editor swaps the buffer
+	// invisibly.
+	shell.tester.Key(0, ui.KeyUp)
+	pumpTUIFrames(shell.tester, 300*time.Millisecond)
+	// Run the recalled line. If the fallback reads the screen, this records the
+	// same correct command again; if it still discards, the count stays 1.
+	shell.tester.Key(0, ui.KeyEnter)
+	if !realShellWait(t, func() bool {
+		return shell.journal.countCommand(captureCommand) >= 2
+	}) {
+		t.Fatalf("the recalled execution never reached the journal: count %d, commands %v, screen %q",
+			shell.journal.countCommand(captureCommand), shell.journal.commands(), shell.surface.ScreenText())
+	}
+	// The captured text must be the verbatim command, not a hybrid fragment or
+	// control-byte residue.
+	for _, command := range shell.journal.commands() {
+		if strings.ContainsRune(command, '\x1b') || strings.ContainsRune(command, '\x03') {
+			t.Fatalf("the journal holds a garbled row %q: %v", command, shell.journal.commands())
+		}
+	}
+}
+
+// TestEmptyRecallDoesNotCaptureThePrompt is the negative guard: when the
+// recall leaves nothing on the line, or the user backs out of a reverse search
+// to a bare prompt, Enter must not record the prompt chrome as a command. The
+// journal must keep only the one real execution.
+func TestEmptyRecallDoesNotCaptureThePrompt(t *testing.T) {
+	shell := openCaptureShell(t, 0)
+	shell.runCaptureCommand(t)
+
+	if got := shell.journal.countCommand(captureCommand); got != 1 {
+		t.Fatalf("after the first run the journal holds %d rows of %q, want 1: %v",
+			got, captureCommand, shell.journal.commands())
+	}
+
+	// Recall then erase the line with Ctrl+U, so Enter submits a bare prompt.
+	// No command ran, so the journal must not grow — and especially must not
+	// grow with a row that is only the prompt text.
+	shell.tester.Key(0, ui.KeyUp)
+	pumpTUIFrames(shell.tester, 200*time.Millisecond)
+	shell.tester.Key(ui.Ctrl, ui.KeyU)
+	pumpTUIFrames(shell.tester, 200*time.Millisecond)
+	before := len(shell.journal.commands())
+	shell.tester.Key(0, ui.KeyEnter)
+	pumpTUIFrames(shell.tester, 400*time.Millisecond)
+	if got := len(shell.journal.commands()); got != before {
+		t.Fatalf("a bare-prompt Enter grew the journal to %v", shell.journal.commands())
+	}
 }
 
 // shareUserCache points an isolated HOME at the developer's real cache

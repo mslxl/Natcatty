@@ -1696,7 +1696,7 @@
   "sessionTransferActive": "{kind} transfer detected. Protocol data is gated.",
   "sessionStatsLabel": "Session statistics",
   "sessionAutocompleteLabel": "Command suggestions",
-  "sessionAutocompleteHint": "Tab to accept · Esc to dismiss",
+  "sessionAutocompleteHint": "↑↓ to preview · Enter accepts · Esc reverts",
   "sessionAutocompleteHistory": "History",
   "sessionAutocompleteGhost": "Suggestion: {suggestion}",
   "sessionAutocompleteFrequency": "×{count}",

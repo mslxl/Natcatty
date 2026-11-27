@@ -27,6 +27,16 @@ func (s *Session) setClipboardAccess(policy domainterminal.ClipboardAccess) {
 	s.tap.setClipboardPolicy(policy)
 }
 
+// SetSubmittedInputReader registers the reader the tap consults at Enter for
+// the input the shell actually shows, or clears it with nil. The terminal
+// surface registers its live view's reader when it attaches and clears it when
+// the view detaches, so a hibernated or replaced view never answers for the
+// screen the user is actually typing on. The reader runs synchronously on the
+// input path; it must only read the screen, never write input.
+func (s *Session) SetSubmittedInputReader(reader func() (string, int, bool)) {
+	s.tap.setSubmittedInputReader(reader)
+}
+
 // CancelTransfer closes an active file-transfer gate from the UI. It reports
 // whether a transfer was active.
 func (s *Session) CancelTransfer() bool {
@@ -64,7 +74,11 @@ func (s *Session) AcknowledgeActivity() {
 // input.
 func (s *Session) handleInput(data []byte, source, translate bool) (forwarded []byte, changed bool, gated bool) {
 	now := time.Now()
-	forwarded, changed, started, completions, transfer := s.tap.handleInput(data, now)
+	// The tap's screen reconciliation answers only for keystrokes typed in
+	// this Session's own terminal: a delivered copy — broadcast, compose,
+	// insert, startup — has no screen moment of its own, so the reader and
+	// the prompt capture stay out of its path.
+	forwarded, changed, started, completions, transfer := s.tap.handleInputProvenance(data, now, source)
 	// The tap returns no bytes only while a transfer consumes normal input.
 	// A Ctrl+C abort returns the five CAN bytes, so it is not gated.
 	gated = len(data) > 0 && len(forwarded) == 0
@@ -187,6 +201,7 @@ func (s *Session) publishTap(now time.Time) tapState {
 		snapshot.Title = state.Title
 		snapshot.Command = state.Command
 		snapshot.Input = state.Input
+		snapshot.InputScreenSourced = state.InputScreenSourced
 		snapshot.Busy = state.Busy
 		snapshot.LastActivity = state.LastActivity
 		snapshot.Transfer = state.Transfer

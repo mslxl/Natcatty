@@ -262,6 +262,12 @@ type Snapshot struct {
 	// line editor's cursor so an accepted suggestion replaces only the text
 	// left of it and leaves the rest of the line intact.
 	InputCursor int
+	// InputScreenSourced reports that Input is the rendered line rather than
+	// the keystroke mirror: an untrackable edit (completion, recall, reverse
+	// search) killed the mirror, and the screen is a lagging witness — echo
+	// that has not caught up reads as a shortening of the real line, which a
+	// consumer keying off input changes must not mistake for the user's edit.
+	InputScreenSourced bool
 	// Busy reports recent output, a running command, or an active transfer.
 	Busy bool
 	// LastActivity is when terminal output last arrived.
@@ -1815,6 +1821,7 @@ func (s *Session) Snapshot() Snapshot {
 	snapshot.Command = state.Command
 	snapshot.Input = state.Input
 	snapshot.InputCursor = state.InputCursor
+	snapshot.InputScreenSourced = state.InputScreenSourced
 	snapshot.Busy = state.Busy
 	snapshot.LastActivity = state.LastActivity
 	snapshot.Transfer = state.Transfer

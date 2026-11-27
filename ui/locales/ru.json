@@ -1171,7 +1171,7 @@
   "sessionTransferActive": "Обнаружена передача {kind}. Данные протокола заблокированы.",
   "sessionStatsLabel": "Статистика сеанса",
   "sessionAutocompleteLabel": "Подсказки команд",
-  "sessionAutocompleteHint": "Tab — принять · Esc — закрыть",
+  "sessionAutocompleteHint": "↑↓ — предпросмотр · Enter — принять · Esc — отменить",
   "sessionAutocompleteHistory": "История",
   "sessionAutocompleteGhost": "Подсказка: {suggestion}",
   "sessionAutocompleteFrequency": "×{count}",
