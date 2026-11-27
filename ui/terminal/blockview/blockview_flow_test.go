@@ -71,3 +71,44 @@ func TestLongOutputGrowsWithTheFlow(t *testing.T) {
 		})
 	}
 }
+
+// Raw views and non-lens commands must never truncate long terminal output;
+// only native lens blocks may fold/truncate their own views.
+func TestRawAndCellOutputNeverTruncatePast500Lines(t *testing.T) {
+	const total = 800
+	var out strings.Builder
+	for i := 0; i < total; i++ {
+		fmt.Fprintf(&out, "row-%04d\n", i)
+	}
+	for name, native := range map[string]bool{"raw": true, "cell": false} {
+		t.Run(name, func(t *testing.T) {
+			store := model.NewStore(nil)
+			store.Begin(model.Cmd{Line: "seq 800", Typed: "seq 800"})
+			store.Append([]byte("\n" + out.String()))
+			store.End(0)
+			if native {
+				id := store.LastID()
+				store.SetNative(id, "natcatty-test", nil, lens.Text{Spans: []lens.Span{{Text: "native"}}}, nil)
+				store.SetMode(id, model.ViewRaw)
+			}
+			blocks := store.Snapshot()
+			tester := ui.NewTester(func(c *ui.Context) {
+				ui.Scroll(c).Fill().Children(func() {
+					ui.Column(c).Padding(10).Children(func() {
+						RenderCommand(c, store, nil, &blocks[0], ui.Rect{}, func(string) {}, nil)
+					})
+				})
+			}, 600, 300)
+			tester.Frame()
+			tester.Frame()
+			texts := tester.Texts()
+			joined := strings.Join(texts, "\n")
+			if !strings.Contains(joined, "row-0799") {
+				t.Fatalf("%s output truncated before final row-0799 (got %d text items)", name, len(texts))
+			}
+			if strings.Contains(joined, "output limit") || strings.Contains(joined, "taken out") {
+				t.Fatalf("%s output unexpectedly showed truncation notice", name)
+			}
+		})
+	}
+}

@@ -16,7 +16,6 @@ package blockview
 import (
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -26,12 +25,6 @@ import (
 	"github.com/mslxl/natcatty/ui/terminal/lensview"
 	"github.com/mslxl/natcatty/ui/terminal/surface"
 )
-
-// maxRawLines caps how many raw lines one frame builds; the full raw text is
-// still what Copy copies. Terminal virtualizes the raw list; this is a simpler
-// bound because the raw body is one selectable document, and a virtualized List
-// cannot be selected as one (MyGo's text docs).
-const maxRawLines = 500
 
 // Render draws every finished block in the store, in order. The prompt and
 // echoed input above each block are screen rows the Pane paints from its
@@ -46,7 +39,13 @@ func Render(c *ui.Context, store *model.Store, engine *lens.Engine, viewport ui.
 			// A running command is still represented by the live terminal
 			// below this flow. Terminal swaps its rows into a finished block only
 			// after OSC 133;D, so rendering it here would duplicate output.
-			if !blocks[i].Exited {
+			//
+			// A running command whose lens already built a view is the exception:
+			// Terminal draws that block while the command runs (the bar takes the
+			// running colour, `data-state='running'`), and the caller crops the
+			// same command's rows out of the live area so the view is its only
+			// copy of the output.
+			if !blocks[i].Exited && blocks[i].Native == nil {
 				continue
 			}
 			RenderCommand(c, store, engine, &blocks[i], viewport, onCopy, menu)
@@ -95,6 +94,13 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 	// steps 10 px out. The card is pulled that far left so its own padding puts the
 	// body back on the prompt's edge (the prompt is drawn outside the card).
 	card := ui.Column(c).Padding(1, 0, 1, 10).Margin(0, 0, 0, -10).Gap(lensview.InnerGap(c)).FillWidth()
+	// Keep the card tall enough to contain the absolutely-positioned hover bar:
+	// an empty or 1-line Raw view would otherwise collapse smaller than the
+	// toolbar so moving the pointer onto [Native | Raw] drops card.Hovered()
+	// and locks the user out of switching back to Native.
+	if hasNative {
+		card = card.MinHeight(actionBarTop + actionBarHeight + actionBarGap + 2)
+	}
 	// A right-click on the card's chrome opens the terminal menu too. The text
 	// inside the body has its own menu (editing items first), which is nearer
 	// in the hit chain and wins; this one covers the bar, rail and padding.
@@ -139,19 +145,20 @@ func renderBlock(c *ui.Context, store *model.Store, engine *lens.Engine, b *mode
 		}
 		// Terminal keeps a question a program is waiting on visible on the block
 		// ("they show … any prompt waiting on you, such as `[y/N]`"). A running
-		// block has no Raw yet, so read its partial output.
-		raw := b.Raw
-		if !b.Exited {
+		// block has no Raw yet, so read its partial output. Binary streams are
+		// skipped so random bytes ending in `?` never trigger a prompt badge.
+		if !b.Exited && !b.Binary {
+			raw := b.Raw
 			if partial := store.PartialRaw(b.ID); partial != "" {
 				raw = partial
 			}
-		}
-		if p := promptTail(raw, !b.Exited); p != "" && !b.Exited {
-			family, size := terminalTextFont(c)
-			ui.Row(c).Gap(8).Children(func() {
-				ui.Text(c, p).Font(family).FontSize(size).TextColor(t.Accent).SingleLine()
-				ui.Badge(c, "waiting for input").Background(t.Surface).TextColor(t.TextMuted)
-			})
+			if p := promptTail(raw, true); p != "" {
+				family, size := terminalTextFont(c)
+				ui.Row(c).Gap(8).Children(func() {
+					ui.Text(c, p).Font(family).FontSize(size).TextColor(t.Accent).SingleLine()
+					ui.Badge(c, "waiting for input").Background(t.Surface).TextColor(t.TextMuted)
+				})
+			}
 		}
 	})
 }
@@ -375,6 +382,8 @@ func renderActions(c *ui.Context, store *model.Store, b *model.Block, card ui.El
 				if partial := store.PartialRaw(b.ID); partial != "" {
 					text = partial
 				}
+			} else if b.Binary && text == "" {
+				text = store.Raw(b.ID)
 			}
 			text = strings.TrimRight(text, "\n")
 			if onCopy != nil {
@@ -432,7 +441,10 @@ func renderSegmented(c *ui.Context, store *model.Store, b *model.Block, hasNativ
 			})
 		}
 		opt("Native", !raw && hasNative, func() { store.SetMode(b.ID, model.ViewNative) })
-		opt("Raw", raw, func() { store.SetMode(b.ID, model.ViewRaw) })
+		// Raw goes through RequestRaw: a picture's raw view is the image's bytes,
+		// which is why the switch is confirmed before the picture is replaced.
+		// Every other block switches at once.
+		opt("Raw", raw, func() { store.RequestRaw(b.ID) })
 	})
 }
 
@@ -477,6 +489,9 @@ func renderBody(c *ui.Context, store *model.Store, b *model.Block, native lens.N
 // too low in the app, while the headless fixtures (which had no leading break) did
 // not show it.
 func leadingBlankRows(store *model.Store, b *model.Block) int {
+	if b.Binary {
+		return 0
+	}
 	raw := b.Raw
 	if !b.Exited {
 		raw = store.PartialRaw(b.ID)
@@ -509,34 +524,31 @@ func cutBreak(s string) (string, bool) {
 
 func renderRaw(c *ui.Context, store *model.Store, b *model.Block, menu func(*ui.Menu)) {
 	t := c.Theme()
-	lines, hidden, expanded := rawLines(store, b)
+	lines := rawLines(store, b)
 	if lines == nil {
 		if !b.Exited {
 			ui.Text(c, "(waiting for output)").TextColor(t.TextMuted)
 		}
 		return
 	}
-	// The raw text is flow text, as tall as its lines: it never gets a scroll of
-	// its own. A viewport here put everything past 260 DIP behind a second
-	// scrollbar, inside the flow's own.
+	// The raw text is flow text, as tall as its lines: raw output is never
+	// truncated (only native lens blocks may fold/truncate their own views).
 	col := selectableText(ui.Column(c).Selectable().FillWidth(), menu)
 	col.Children(func() { rawTexts(c, lines) })
-	renderRawNotice(c, store, b, hidden, expanded)
 }
 
 // renderCell is a command no lens claimed: Terminal leaves it as terminal cells, so
 // the flow draws the shared prompt row and the raw output without block chrome
 // (no rail, hover bar, Native/Raw switch, copy button or foot).
 func renderCell(c *ui.Context, store *model.Store, b *model.Block, menu func(*ui.Menu)) {
-	lines, hidden, expanded := rawLines(store, b)
+	lines := rawLines(store, b)
 	if lines == nil {
 		return
 	}
 	// Cells are flow text too, whatever their count: a long output grows the
-	// flow, and the flow's scroll reaches its end.
+	// flow without truncation, and the flow's scroll reaches its end.
 	col := selectableText(ui.Column(c).Selectable(), menu)
 	col.Children(func() { cellTexts(c, lines) })
-	renderRawNotice(c, store, b, hidden, expanded)
 }
 
 // renderImages draws the inline pictures a command printed, in the block they
@@ -629,17 +641,20 @@ func selectableText(e ui.Element, menu func(*ui.Menu)) ui.Element {
 	})
 }
 
-// rawLines is the text both a raw block and a plain cell draw: the streamed
-// output while a command runs, the finished output after, with Terminal's block-level
-// line cap (and whether the user lifted it).
-func rawLines(store *model.Store, b *model.Block) (lines []string, hidden int, expanded bool) {
+// rawLines is the complete text both a raw block and a plain cell draw: the
+// streamed output while a command runs, and the full finished output after,
+// without any line truncation.
+func rawLines(store *model.Store, b *model.Block) []string {
 	// A running block has no b.Raw yet (the store only fills it when the command
-	// ends), so the streamed lines come from PartialRaw.
+	// ends), so the streamed lines come from PartialRaw. A binary block formats
+	// its complete raw byte stream on demand via store.Raw.
 	raw := b.Raw
 	if !b.Exited {
 		if partial := store.PartialRaw(b.ID); partial != "" {
 			raw = partial
 		}
+	} else if b.Binary && raw == "" {
+		raw = store.Raw(b.ID)
 	}
 	raw = strings.TrimRight(raw, "\r\n")
 	// The stream opens with the line break that ended the prompt row (see
@@ -649,15 +664,9 @@ func rawLines(store *model.Store, b *model.Block) (lines []string, hidden int, e
 		raw = rest
 	}
 	if raw == "" {
-		return nil, 0, false
+		return nil
 	}
-	lines = strings.Split(raw, "\n")
-	expanded = rawExpanded(store, b)
-	if !expanded && len(lines) > maxRawLines {
-		hidden = len(lines) - maxRawLines
-		lines = lines[:maxRawLines]
-	}
-	return lines, hidden, expanded
+	return strings.Split(raw, "\n")
 }
 
 // rawTexts draws a block's raw output as the terminal text it is: the
@@ -675,32 +684,6 @@ func rawTexts(c *ui.Context, lines []string) {
 		if CellRowHeight > 0 {
 			e = e.FixedLineHeight(CellRowHeight)
 		}
-	}
-}
-
-// renderRawNotice is Terminal's block-level output-limit affordance: the clickable
-// notice expands the whole output (strings 791490-791492).
-func renderRawNotice(c *ui.Context, store *model.Store, b *model.Block, hidden int, expanded bool) {
-	t := c.Theme()
-	if hidden > 0 {
-		unit := "lines"
-		if hidden == 1 {
-			unit = "line"
-		}
-		notice := ui.Text(c, itoa(hidden)+" "+unit+" over this command's output limit are taken out here · click for the whole output").
-			TextColor(t.TextMuted)
-		notice.OnClick(func() {
-			setRawExpanded(store, b, true)
-			c.Invalidate()
-		})
-		return
-	}
-	if expanded {
-		more := ui.Text(c, "Show fewer lines").TextColor(t.TextMuted)
-		more.OnClick(func() {
-			setRawExpanded(store, b, false)
-			c.Invalidate()
-		})
 	}
 }
 
@@ -726,15 +709,6 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// rawExpand remembers which raw blocks the user expanded past the line cap.
-var (
-	rawExpandMu sync.Mutex
-	rawExpand   = map[string]bool{}
-)
-
-// stateCap bounds the per-block state map, like the lensview one.
-const stateCap = 4096
-
 // lensScope keys the lens view's interactive state by the block's run, so a new
 // run (after Clear, or in another store) does not inherit a collapsed section.
 func lensScope(store *model.Store, b *model.Block) string {
@@ -742,27 +716,8 @@ func lensScope(store *model.Store, b *model.Block) string {
 }
 
 // rawKey identifies one block run: the store resets its ids on Clear, so the
-// block's start time keeps a new run from inheriting an old expansion.
+// block's start time keeps a new run from inheriting an old state.
 func rawKey(store *model.Store, b *model.Block) string {
 	return strconv.FormatUint(store.UID(), 10) + ":" + itoa(b.ID) + "@" +
 		strconv.FormatInt(b.Started.UnixNano(), 10)
-}
-
-func rawExpanded(store *model.Store, b *model.Block) bool {
-	rawExpandMu.Lock()
-	defer rawExpandMu.Unlock()
-	return rawExpand[rawKey(store, b)]
-}
-
-func setRawExpanded(store *model.Store, b *model.Block, on bool) {
-	rawExpandMu.Lock()
-	defer rawExpandMu.Unlock()
-	if on {
-		if len(rawExpand) > stateCap {
-			rawExpand = map[string]bool{}
-		}
-		rawExpand[rawKey(store, b)] = true
-		return
-	}
-	delete(rawExpand, rawKey(store, b))
 }

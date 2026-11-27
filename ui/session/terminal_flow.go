@@ -66,6 +66,9 @@ type terminalFlow struct {
 	// entered. The Pane crops the live area at the cursor meanwhile, so the
 	// output is not shown twice until the prompt replaces it.
 	promptPending bool
+	// session is the terminal the flow reads marks and state from. It is nil
+	// for a flow built without one (the tests that drive the tap directly).
+	session *appsession.Session
 
 	// promptTheme is the live terminal scheme the captured prompt rows are
 	// resolved with. It is set from the Surface's theme each frame; a capture
@@ -106,13 +109,14 @@ func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 	tap := vt.New(store).WithCols(200)
 	gfx := graphics.New()
 	surface := &terminalFlow{
-		store:  store,
-		engine: engine,
-		tap:    tap,
-		gfx:    gfx,
-		redraw: redraw,
+		store:   store,
+		engine:  engine,
+		tap:     tap,
+		gfx:     gfx,
+		redraw:  redraw,
+		session: session,
 	}
-	surface.unsubscribe = session.SubscribeOutputReplay(func(data []byte) {
+	surface.unsubscribe = session.SubscribeOutputFilterReplay(func(data []byte) []byte {
 		surface.tapMu.Lock()
 		// Pictures belong to the command that printed them. The tap has to see
 		// the bytes first (that is what starts and ends its block), so remember
@@ -120,12 +124,15 @@ func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 		// chunk itself created when a fast command arrives whole (its output,
 		// picture and OSC 133;D in one read).
 		runningID, running := surface.store.LastID(), surface.store.HasRunning()
-		tap.Feed(data)
+		filtered := tap.FeedFilter(data)
 		// The tap's OSC 133;C marks line up with the mirror's captures below;
 		// take them now, before this chunk's captures exist, so both queues
 		// grow in the same order.
 		surface.notePromptMarks(tap.TakeCommandMarks())
-		images := surface.gfx.Feed(data)
+		var images []graphics.Image
+		if len(filtered) > 0 {
+			images = surface.gfx.Feed(filtered)
+		}
 		// What the screen is now decides whether pictures show: on the
 		// alternate screen only the terminal's own view can draw one, so the
 		// pane asks for it. A program that merely queries the protocol draws
@@ -161,11 +168,14 @@ func newTerminalFlow(session *appsession.Session, redraw func()) *terminalFlow {
 			}
 		}
 		surface.tapMu.Unlock()
-		surface.feedBell(data)
+		if len(filtered) > 0 {
+			surface.feedBell(filtered)
+		}
 		surface.pairPrompts()
 		if redraw != nil {
 			redraw()
 		}
+		return filtered
 	})
 	return surface
 }
@@ -268,11 +278,29 @@ func (s *terminalFlow) setSize(cols, rows int) {
 				// cutting the prompt off above the cursor). A height change
 				// without re-wrapping keeps every row where it was, and the
 				// Pane's own block insertion relies on that.
-				s.promptRowKnown = false
+				//
+				// A shell whose prompt-start mark said `redraw=0` promised not
+				// to draw the prompt again, so the terminal's reflow is the only
+				// prompt there will be: dropping the row would leave the flow
+				// without a boundary until the next command, which is how a
+				// window that came back from the background lost its rows.
+				if !s.shellKeepsPromptOnResize() {
+					s.promptRowKnown = false
+				}
 			}
 		}
 	}
 	s.bellMu.Unlock()
+}
+
+// shellKeepsPromptOnResize reports that the shell promised not to redraw its
+// prompt when the window changes size (OSC 133;A;redraw=0). The terminal then
+// reflows the prompt, so the recorded boundary stays the one the shell means.
+func (s *terminalFlow) shellKeepsPromptOnResize() bool {
+	if s == nil || s.session == nil {
+		return false
+	}
+	return s.session.Snapshot().PromptNoRedraw
 }
 
 func (s *terminalFlow) setCols(cols int) {
