@@ -56,7 +56,7 @@ type chromeModel struct {
 	CanReconnect bool
 
 	// Input is the line being typed. Suggestions are the autocomplete rows for
-	// it, with SuggestionIndex selecting the row Tab accepts.
+	// it, with SuggestionIndex marking the row the arrows have selected.
 	Input            string
 	Suggestions      []autocomplete.Suggestion
 	SuggestionIndex  int
@@ -230,7 +230,7 @@ func autocompleteLayers(c *ui.Context, target ui.Element, model chromeModel, cur
 
 // autocompletePopup lists the matching commands at the placement. It shows as
 // many rows as fit; the window of rows scrolls so the selected row stays
-// visible, and the marked row is the one Tab accepts.
+// visible, and the marked row is the one the live preview renders.
 func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions, placement autocompletePlacement) {
 	rows := min(placement.Rows, len(model.Suggestions))
 	if rows <= 0 {

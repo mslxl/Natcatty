@@ -419,14 +419,29 @@ type Surface struct {
 	suggestionProgram   bool
 	suggestionPending   time.Time
 	suggestionDismissed bool
-	// suggestionRequested reports that the user asked for the completion list
-	// on the line being typed (Tab, or a click). Typing never opens the popup
-	// on its own; the request resets when the input changes, so the list
-	// follows the line it was asked for and closes when that line is gone.
-	suggestionRequested bool
 	suggestionTimer     *time.Timer
 	showAutocomplete    bool
 	showGhost           bool
+	// Live-preview state: while previewActive the shell line holds
+	// previewLine — the full line content the last preview write produced —
+	// with the cursor at previewCursor. previewBaseline is the line as typed
+	// before the first preview write and previewBaselineHead the part of it
+	// left of the cursor: reverting erases everything the chain left of the
+	// cursor and writes the head back, which reconstructs the baseline at
+	// exactly its cursor, because preview writes never touch the line right
+	// of the cursor. Typing under a preview drops the state: the edit is the
+	// user's, and nothing may drag the line back after it.
+	previewActive       bool
+	previewBaseline     string
+	previewBaselineHead string
+	previewLine         string
+	previewCursor       int
+	// ownWriteLine is the line content the surface's most recent write to the
+	// shell produced, or "" when no write is in flight. The refresh loop
+	// recognizes it: a write the surface itself made is not the user's edit,
+	// so it neither expires a dismissal nor drops preview state nor
+	// recomputes the rows against the surface's own output.
+	ownWriteLine string
 	// programPrompt reports that the last refresh found a non-shell program
 	// waiting for ordinary input. Acceptance uses it to replace only the typed
 	// query instead of the whole shell line.
@@ -839,7 +854,7 @@ func (s *Surface) view(c *ui.Context, focused, explicitFocus bool) ui.Element {
 	s.locale = c.Locale()
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
-	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
+	s.refreshSuggestionsFor(snapshot.Input, snapshot.CWD, snapshot.Command.Running, snapshot.InputScreenSourced, false)
 	model, actions := s.chrome(c, snapshot)
 
 	// FillHeight sizes the surface to the room its Pane gives it, but a
@@ -1015,7 +1030,7 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		Observe:     func() { _ = s.OpenObserver() },
 		OpenBrowser: s.openBrowserAction(),
 		AcceptSuggestion: func(index int) {
-			s.acceptSuggestion(index)
+			s.acceptSuggestionClick(index)
 		},
 		ToggleFiles: s.paneActions.ToggleFiles,
 	}

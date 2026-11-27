@@ -201,6 +201,7 @@ func (s *Session) publishTap(now time.Time) tapState {
 		snapshot.Title = state.Title
 		snapshot.Command = state.Command
 		snapshot.Input = state.Input
+		snapshot.InputScreenSourced = state.InputScreenSourced
 		snapshot.Busy = state.Busy
 		snapshot.LastActivity = state.LastActivity
 		snapshot.Transfer = state.Transfer

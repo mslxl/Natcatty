@@ -1171,7 +1171,7 @@
   "sessionTransferActive": "偵測到 {kind} 傳輸。協定資料已被攔截。",
   "sessionStatsLabel": "工作階段統計",
   "sessionAutocompleteLabel": "指令建議",
-  "sessionAutocompleteHint": "Tab 接受 · Esc 關閉",
+  "sessionAutocompleteHint": "↑↓ 預覽 · Enter 接受 · Esc 還原",
   "sessionAutocompleteHistory": "歷史記錄",
   "sessionAutocompleteGhost": "建議：{suggestion}",
   "sessionAutocompleteFrequency": "×{count}",

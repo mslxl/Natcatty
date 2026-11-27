@@ -1171,7 +1171,7 @@
   "sessionTransferActive": "检测到 {kind} 传输。协议数据已被拦截。",
   "sessionStatsLabel": "会话统计",
   "sessionAutocompleteLabel": "命令建议",
-  "sessionAutocompleteHint": "Tab 接受 · Esc 关闭",
+  "sessionAutocompleteHint": "↑↓ 预览 · Enter 接受 · Esc 还原",
   "sessionAutocompleteHistory": "历史记录",
   "sessionAutocompleteGhost": "建议：{suggestion}",
   "sessionAutocompleteFrequency": "×{count}",

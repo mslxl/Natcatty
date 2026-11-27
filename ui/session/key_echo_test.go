@@ -1,7 +1,6 @@
 package sessionui
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -53,39 +52,36 @@ func historySuggestions(input, _, _ string) []autocomplete.Suggestion {
 	}
 }
 
-// A platform that commits the characters of a key after its key down must not
-// get a tab through when Tab accepted a completion. No desktop commits Tab's
-// text today — macOS makes it a command selector and mygo drops Windows's
-// control characters — so the tester models the contract here; the real-shell
-// test in app/ covers the reported flow end to end. The first keypress opens
-// the request-driven list, the second accepts: neither may leak a tab byte.
-func TestTabAcceptsACompletionWithoutSendingATab(t *testing.T) {
+// Tab is never the popup's key: the popup is the automatic list, and the
+// completion the user means when they press Tab is the shell's own, so the
+// byte reaches the transport exactly once. A platform that commits the
+// characters of a key after its key down must not double it either — no
+// desktop commits Tab's text today (macOS makes it a command selector and
+// mygo drops Windows's control characters), so the tester models the contract
+// here; the real-shell test in app/ covers the reported flow end to end.
+func TestTabPassesThePopupByAndReachesTheShellOnce(t *testing.T) {
 	surface, transport, tester := keyEchoSurface(t, historySuggestions)
-	// Typing never opens the list on its own.
-	if tester.HasText("gi status") {
-		t.Fatalf("the popup opened on typing: %v", tester.Texts())
+	openSuggestionPopup(t, surface, tester)
+	if !tester.HasText("gi status") {
+		t.Fatalf("the automatic popup did not open: %v", tester.Texts())
 	}
 
 	tester.TypeKey(0, ui.KeyTab, "\t")
+	if !waitFor(t, func() bool { return strings.Count(transport.input(), "\t") >= 1 }) {
+		t.Fatalf("Tab did not reach the shell with the popup open: %q", transport.input())
+	}
 	tester.Frame()
-	if !tester.HasText("gi status") {
-		t.Fatalf("the first Tab did not open the popup: %v", tester.Texts())
+	if tester.HasText("gi status") {
+		t.Fatalf("the popup stayed open through Tab: %v", tester.Texts())
 	}
-	if bytes.Contains([]byte(transport.input()), []byte("\t")) {
-		t.Fatalf("the opening Tab reached the shell: %q", transport.input())
+	if surface.showAutocomplete {
+		t.Fatal("the popup is still marked open after Tab")
 	}
-	if !surface.showAutocomplete {
-		t.Fatal("the popup is not marked open after the first Tab")
-	}
-	tester.TypeKey(0, ui.KeyTab, "\t")
-	if !waitFor(t, func() bool { return strings.Contains(transport.input(), "\x7f\x7fgi status") }) {
-		t.Fatalf("the second Tab did not accept the completion: %q", transport.input())
-	}
-	// The accepted text and the tab byte come from the same key. Give a
-	// delayed duplicate a moment to show up before judging.
+	// The byte and any echo of the closing popup come from the same key. Give
+	// a delayed duplicate a moment to show up before judging.
 	time.Sleep(50 * time.Millisecond)
-	if got := transport.input(); bytes.Contains([]byte(got), []byte("\t")) {
-		t.Fatalf("a literal tab followed the accepted completion: %q", got)
+	if got := transport.input(); strings.Count(got, "\t") != 1 {
+		t.Fatalf("Tab reached the shell %d times: %q", strings.Count(got, "\t"), got)
 	}
 }
 

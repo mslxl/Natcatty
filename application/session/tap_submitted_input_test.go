@@ -174,7 +174,7 @@ func TestTapBarePromptKeepsTheDiscard(t *testing.T) {
 	}
 }
 
-func TestTapCompletionGrowthRecordsTheRenderedLine(t *testing.T) {
+func TestTapCompletionRecordsTheRenderedLine(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	screen := &screenReader{prompt: "% ", ok: true}
 	tap.setSubmittedInputReader(screen.line())
@@ -182,9 +182,9 @@ func TestTapCompletionGrowthRecordsTheRenderedLine(t *testing.T) {
 	tap.handleInput([]byte("\r"), tapAt(time.Second))
 
 	// Tab completion: the user types "git st" and presses Tab; the line editor
-	// grows the line to "git status" invisibly — the Tab byte is neither
-	// mirrored nor invalidating, so the mirror still holds "git st", a strict
-	// prefix fragment of the rendered line. The rendered truth wins.
+	// grows the line to "git status" invisibly. Tab is untrackable, so the
+	// mirror is lost exactly as in a recall — and the same rescue answers: the
+	// rendered line is the completed truth.
 	screen.input = ""
 	typeIn(tap, screen, "git st", tapAt(2*time.Second))
 	tap.handleInput([]byte("\t"), tapAt(3*time.Second))
@@ -198,15 +198,28 @@ func TestTapCompletionGrowthRecordsTheRenderedLine(t *testing.T) {
 	}
 }
 
+func TestTapTabInvalidatesTheMirror(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	// Even when the shell answers Tab with nothing — an ambiguous completion,
+	// a bell — the mirror is lost: the tap cannot know that nothing changed,
+	// so the capture degrades to the discard where no screen can prove the
+	// line. Without a reader the safest answer is no row.
+	tap.handleInput([]byte("git st"), tapAt(0))
+	tap.handleInput([]byte("\t"), tapAt(time.Second))
+	if !tap.inputLost {
+		t.Fatal("Tab did not invalidate the mirror")
+	}
+}
+
 func TestTapEraseEchoInFlightKeepsTheMirror(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	screen := &screenReader{prompt: "% ", ok: true}
 	tap.setSubmittedInputReader(screen.line())
 	// Type "gits", erase the s, and press Enter fast on a slow link: the erase
 	// echo is still in flight, so the screen still shows the pre-erasure line.
-	// That is the mirror plus a suffix — the exact shape completion growth
-	// has — but no Tab was pressed, so the gate keeps the mirror: "git" is
-	// what runs, not the stale "gits".
+	// No keystroke on this line was untrackable, so the mirror is reliable and
+	// wins outright: "git" is what runs, not the stale "gits" — with no
+	// fragment guessing involved, since every invisible edit invalidates.
 	screen.input = ""
 	typeIn(tap, screen, "gits", tapAt(0))
 	tap.handleInput([]byte{0x7f}, tapAt(time.Second))
@@ -220,12 +233,12 @@ func TestTapEraseEchoInFlightKeepsTheMirror(t *testing.T) {
 	}
 }
 
-func TestTapEchoLagKeepsTheMirrorAgainstTheFragmentRule(t *testing.T) {
+func TestTapEchoLagKeepsTheMirror(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	screen := &screenReader{prompt: "% ", ok: true}
 	tap.setSubmittedInputReader(screen.line())
-	// Genuine echo lag: the screen trails the mirror, so the rendered input is
-	// a fragment of the mirror — not the other way round — and the mirror wins.
+	// Genuine echo lag: the screen trails the mirror, and the mirror wins —
+	// it is the more current witness.
 	typeIn(tap, screen, "echo seed", tapAt(0))
 	screen.input = "echo" // only part of the echo has landed
 	_, _, started, _, _ := tap.handleInput([]byte("\r"), tapAt(time.Second))
