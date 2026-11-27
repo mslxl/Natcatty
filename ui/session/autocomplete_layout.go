@@ -215,49 +215,84 @@ func autocompleteAssemblyHeight(popupRows int, ghost bool) float32 {
 // placeAutocomplete decides where the floating layers go. It mirrors the
 // original's cursor-anchored placement: prefer below the input line, flip up
 // when the list cannot fit below and above is the better side, shrink the
-// list to the room actually available, then clamp into the terminal's screen.
-// gridCell is the measured cell the pane paints its rows with and gridInset
-// where its first cell starts inside the bounds, so a cell's window position
-// is exact rather than an estimate from the terminal's total box. A zero cell
-// falls back to dividing the box by the grid, the estimate the plugin's own
-// padding assumptions make.
-func placeAutocomplete(bounds ui.Rect, cursor autocompleteCursor, cols, rows, suggestions int, popup, ghost bool, gridCell appview.CellGeometry, insetX, insetY float32) autocompletePlacement {
+// list to the room actually available, then clamp inside the terminal's
+// visible area.
+//
+// The anchor is visual, not derived from the terminal's screen rows. The live
+// grid is not the terminal's full screen: the flow crops the rows above the
+// current prompt into finished blocks and trims the blank rows below the
+// cursor, so the cursor's screen row no longer counts down the rows the grid
+// shows — the arithmetic that anchored top-down displaced the popup by the
+// cropped rows, which put it over the finished blocks at the pane's top
+// instead of beside the prompt. The Pane draws the cursor row, so its box is
+// exact: cursorRow is that box in window coordinates. viewport is the visible
+// area the list may float over — the flow's own box, blocks and grid together,
+// because the list is an overlay and covering a finished block behind it is
+// what floating means; the grid alone is often a single row tall, far too
+// small to hold the list. gridCell is the measured cell the pane paints its
+// rows with; a zero cell falls back to dividing the viewport by the grid, the
+// estimate the plugin's padding assumptions make, and a zero cursorRow (no
+// frame captured yet) falls back to the arithmetic the screen rows imply,
+// exact only for an empty flow.
+func placeAutocomplete(viewport ui.Rect, cursorRow ui.Rect, cursor autocompleteCursor, cols, rows, suggestions int, popup, ghost bool, gridCell appview.CellGeometry) autocompletePlacement {
 	cellW, cellH := gridCell.W, gridCell.H
+	insetX, insetY := appview.LiveGridPadding()
 	if cellW <= 0 || cellH <= 0 {
-		cellW, cellH = autocompleteCellSize(bounds, cols, rows)
-		insetX, insetY = terminalPaddingX, terminalPaddingY
+		cellW, cellH = autocompleteCellSize(viewport, cols, rows)
 	}
-	width := min(bounds.W-2*insetX, autocompleteMaxWidth)
+	width := min(viewport.W-2*insetX, autocompleteMaxWidth)
 	if width <= 0 || cellW <= 0 || cellH <= 0 {
 		return autocompletePlacement{}
 	}
-	screenLeft := bounds.X + insetX
-	screenRight := bounds.X + bounds.W - insetX
-	screenTop := bounds.Y + insetY
-	screenBottom := bounds.Y + bounds.H - insetY
+	screenLeft := viewport.X + insetX
+	screenRight := viewport.X + viewport.W - insetX
+	screenTop := viewport.Y + insetY
+	screenBottom := viewport.Y + viewport.H - insetY
+
+	// The input line's vertical span. The cursor row's box is exact when the
+	// Pane has captured one; the command's first row sits inputRows above it
+	// because the rows a wrapped input occupies count back from the cursor.
+	rowTop, rowBottom := cursorRow.Y, cursorRow.Y+cursorRow.H
+	rowCellH := cellH
+	if cursorRow.H <= 0 {
+		// No captured row yet: the first frames of an empty flow, where the
+		// grid fills the viewport and the screen's rows spread across it. The
+		// cell that arithmetic needs is the viewport divided by the grid —
+		// not the measured cell, which sizes one rendered row of the cropped
+		// tail and bears no relation to where screen row N sits in the box.
+		_, rowCellH = autocompleteCellSize(viewport, cols, rows)
+		rowTop = screenTop + float32(cursor.Row)*rowCellH
+		rowBottom = rowTop + rowCellH
+	}
+	inputRows := max(cursor.Row-cursor.StartRow, 0)
+	inputTop := rowTop - float32(inputRows)*rowCellH
+
+	// The space beside the input is what the visible area shows above the
+	// command's first row and below the cursor's row. The list may cover the
+	// finished blocks behind it — it floats — so the room is measured against
+	// the flow's box, not the live grid's. At a shell prompt the cursor sits
+	// at the bottom of the visible screen, so the space below is small and
+	// the list opens upward beside the prompt.
+	spaceAbove := max(inputTop-screenTop, 0)
+	spaceBelow := max(screenBottom-rowBottom, 0)
 
 	wantRows := 0
 	if popup {
 		wantRows = min(suggestions, maxVisibleSuggestions)
 	}
-	upwardRow := min(cursor.StartRow, cursor.Row)
-	downwardRow := max(cursor.StartRow, cursor.Row)
-	spaceAbove := float32(upwardRow) * cellH
-	spaceBelow := float32(max(rows-downwardRow-1, 0)) * cellH
-
 	want := autocompleteAssemblyHeight(wantRows, ghost)
 	upward := false
 	switch {
 	case spaceBelow >= want:
 	case spaceAbove >= want:
 		upward = true
-	case cursor.Row > 2 && spaceAbove >= spaceBelow:
+	case spaceAbove >= spaceBelow:
 		upward = true
 	}
 
-	anchorRow, space := cursor.Row, spaceBelow
+	space := spaceBelow
 	if upward {
-		anchorRow, space = upwardRow, spaceAbove
+		space = spaceAbove
 	}
 	available := space - autocompleteAnchorGap
 	fitRows := wantRows
@@ -269,22 +304,37 @@ func placeAutocomplete(bounds ui.Rect, cursor autocompleteCursor, cols, rows, su
 	}
 	assemblyHeight := autocompleteAssemblyHeight(fitRows, ghost)
 
-	anchorTop := screenTop + float32(anchorRow)*cellH
-	anchorBottom := anchorTop + cellH
 	var top float32
 	if upward {
-		top = anchorTop - autocompleteAnchorGap - assemblyHeight
+		top = inputTop - autocompleteAnchorGap - assemblyHeight
 		if top < screenTop {
 			top = screenTop
 		}
+		// The anchor moves with the scroll: a reader scrolling toward the
+		// start carries the input line down past the viewport's end, and the
+		// upward placement would otherwise follow it out — floating over
+		// whatever sits below the terminal rather than over the flow. Clamp
+		// the assembly into the visible area, as the downward side does.
+		if top+assemblyHeight > screenBottom {
+			top = max(screenBottom-assemblyHeight, screenTop)
+		}
 	} else {
-		top = anchorBottom + autocompleteAnchorGap
+		top = rowBottom + autocompleteAnchorGap
 		if top+assemblyHeight > screenBottom {
 			top = max(screenBottom-assemblyHeight, screenTop)
 		}
 	}
 
-	anchorLeft := screenLeft + float32(cursor.Column)*cellW
+	// Horizontally the cursor column counts cells from the grid's content
+	// left edge. The captured row's left is exactly that edge — it is the
+	// grid's own box, inset — so the column lands on the cursor's cell rather
+	// than on an estimate from the flow's box, whose padding differs from the
+	// grid's by the flow's margins.
+	gridLeft := cursorRow.X
+	if cursorRow.H <= 0 {
+		gridLeft = screenLeft
+	}
+	anchorLeft := gridLeft + float32(cursor.Column)*cellW
 	left := min(max(anchorLeft, screenLeft), screenRight-width)
 
 	placement := autocompletePlacement{

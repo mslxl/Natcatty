@@ -340,6 +340,15 @@ type Surface struct {
 	// The Pane writes it, because it draws the grid and owns the pointer
 	// mapping; it lives here for the same reason the selection does.
 	liveHover appview.Hover
+	// liveAnchor is where the live grid and its cursor row are in the window,
+	// written by the Pane every frame. The autocomplete popup anchors at the
+	// cursor row, and neither the pane's bounds nor the terminal's screen-row
+	// arithmetic can place it: the grid sits below the flow's finished blocks,
+	// renders only the live tail, and moves with the scroll. The Pane draws
+	// the rows, so it is the one component that knows where they are. The
+	// anchor is the previous frame's layout, one frame behind a resize, which
+	// the placement clamps away.
+	liveAnchor appview.LiveAnchor
 
 	gate             *PasteGate
 	drops            *DropHandler
@@ -887,16 +896,20 @@ func (s *Surface) view(c *ui.Context, focused, explicitFocus bool) ui.Element {
 			// same visual flow; the live terminal is the last element, matching
 			// mygo-flow's Pane layout.
 			termView := s.terminalView(c)
-			// Suggestions float over the terminal at the cursor cell. Building
-			// them after the terminal gives the overlay the terminal's bounds,
-			// and an overlay row never takes room from the grid. The cursor comes
-			// from the VT snapshot: the replay carries the emulator's own cursor
-			// position, so a screen whose scrollback outlives a clear cannot
-			// inflate the row the way counting Text's lines did.
+			// Suggestions float over the terminal at the cursor cell. The anchor
+			// is the cursor row's own box as the Pane laid it out: the grid sits
+			// below the flow's finished blocks, renders only the live tail, and
+			// moves with the scroll, so neither the pane's bounds nor the
+			// terminal's screen-row arithmetic can place it. The box is the
+			// previous frame's layout, one frame behind a resize, which the
+			// placement clamps away. The cursor column still comes from the VT
+			// snapshot: the replay carries the emulator's own cursor position,
+			// so a screen whose scrollback outlives a clear cannot inflate it
+			// the way counting Text's lines did.
 			if (model.ShowAutocomplete || model.ShowGhost) && s.terminal != nil {
 				cols, rows := s.terminal.Size()
 				cursor := autocompleteCursorFromSnapshot(s.terminal.Snapshot(), model.Input, cols, rows)
-				autocompleteLayers(c, termView, model, cursor, cols, rows, m, t, actions)
+				autocompleteLayers(c, termView, s.liveAnchor, model, cursor, cols, rows, m, t, actions)
 			}
 		}
 		if s.renaming {
@@ -1211,6 +1224,7 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 				// captured at the command's OSC 133;C mark: the shell's own
 				// prompt, not one this app could only approximate.
 				PromptRows: s.flow.promptRowsFor,
+				LiveAnchor: &s.liveAnchor,
 				Focus:      focus,
 				Refocus:    flowRefocus,
 				KeepFocus:  s.focused,

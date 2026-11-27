@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -1096,6 +1097,106 @@ func TestSurfaceAutocompletePopupFloatsAboveThePrompt(t *testing.T) {
 	if last.Y+last.H > inputTop+0.5 {
 		t.Fatalf("the popup covers the input line: last row %+v input top %v",
 			last, inputTop)
+	}
+}
+
+// TestPopupAnchorsBelowFinishedBlocks is the regression guard for the popup
+// floating at the pane's top instead of beside the prompt: the live grid sits
+// below the flow's finished blocks and renders only the live tail, so the
+// terminal's screen-row arithmetic misplaces the popup by the cropped rows.
+// The anchor must be the cursor row's own box, which the Pane records where
+// it draws it every frame.
+func TestPopupAnchorsBelowFinishedBlocks(t *testing.T) {
+	surface, transport := newScriptedSurface(t,
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
+			return []autocomplete.Suggestion{
+				{Text: input + " status", Source: "history"},
+				{Text: input + " stash", Source: "history"},
+			}
+		}, func() (bool, bool) { return true, false }))
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
+	tester.SetLocale("en")
+	for i := 0; i < 4; i++ {
+		tester.Frame()
+	}
+	// The tester measures the flow's full height rather than the viewport's,
+	// so the terminal it sizes has far more rows than a real window's. A
+	// shell drives the geometry its transport reports: pin it to a realistic
+	// screen so the screen rows and the rendered rows agree.
+	surface.terminal.Resize(80, 24)
+	pump := func(what string, ok func() bool) {
+		t.Helper()
+		pumpFrames(t, tester, what, ok)
+	}
+
+	// The session has been running long enough to fill the screen, so the
+	// flow — blocks and live grid together — is the viewport's height. A
+	// finished command then enters the flow as a block, pushing the live
+	// grid down: the user's screenshot had rows of a finished listing above
+	// the prompt, with the popup floating over them.
+	transport.emit(strings.Repeat("scrolled output\r\n", 40))
+	transport.emit("\x1b]133;A\x07\x1b]133;B\x07✦ work ❯ ")
+	transport.emit("ll\r\n")
+	transport.emit("\x1b]1337;NetcattyExec;zsh;L3RtcC93b3Jr;bGw=\x07\x1b]133;C\x07")
+	for i := 0; i < 20; i++ {
+		transport.emit(fmt.Sprintf("drwxr-xr-x  user  row%02d\r\n", i))
+	}
+	transport.emit("\x1b]133;D;0\x07")
+	waitForFinishedTerminalBlock(t, surface, 1)
+
+	// The next prompt is the live grid's input line. The user types "gi" at it:
+	// the keystrokes go through the terminal's input path to the transport, and
+	// the shell echoes them back, so the tap tracks the line exactly as it does
+	// in a live session.
+	transport.emit("\x1b]133;A\x07\x1b]133;B\x07✦ work ❯ ")
+	pump("the live prompt", func() bool { return tester.HasText("✦ work ❯") })
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "gi") }) {
+		t.Fatalf("the typed input never reached the transport: %q", transport.Input())
+	}
+	transport.emit("gi")
+	pump("the echoed input", func() bool { return tester.HasText("✦ work ❯ gi") })
+	for i := 0; i < 4; i++ {
+		tester.Frame()
+	}
+	if !surface.liveAnchor.HasCursor {
+		t.Fatalf("the cursor row's box was never recorded")
+	}
+	prompt, ok := findLabelPrefix(tester, "✦ work ❯ gi")
+	if !ok {
+		t.Fatalf("the live prompt row is not drawn: %v", tester.Texts())
+	}
+	// The anchor the Pane recorded must be where the prompt row actually
+	// renders: the popup placement consumes exactly this box, so the test can
+	// trust what it asserts below.
+	anchorRow := surface.liveAnchor.CursorRow
+	if anchorRow.Y < prompt.Y-1 || anchorRow.Y > prompt.Y+prompt.H {
+		t.Fatalf("the recorded cursor row %+v is not where the prompt renders %+v", anchorRow, prompt)
+	}
+	if prompt.Y <= surface.liveAnchor.Grid.Y {
+		t.Fatalf("the prompt row %+v is not inside the live grid's box %+v", prompt, surface.liveAnchor.Grid)
+	}
+
+	surface.refreshSuggestionsFor("gi", "", false, false, true)
+	tester.Frame()
+	tester.Frame()
+	m := locales.In("en")
+	header, ok := tester.Find(m.SessionAutocompleteLabel())
+	if !ok {
+		t.Fatalf("the popup did not open: %v", tester.Texts())
+	}
+
+	// The popup belongs beside the prompt: its rows float just above or below
+	// the input line. It is an overlay, so it may cover the finished blocks
+	// behind it — the bug was never the overlap but the displacement, the
+	// list floating at the pane's top far from the prompt it completes. What
+	// it must not do is cover the prompt itself or drift rows away from it.
+	headerBottom := header.Y + header.H
+	if headerBottom > prompt.Y+0.5 && header.Y < prompt.Y+prompt.H {
+		t.Fatalf("the popup covers the prompt: header %+v prompt %+v", header, prompt)
+	}
+	if header.Y < prompt.Y-12*autocompleteRowHeight || header.Y > prompt.Y+4*autocompleteRowHeight {
+		t.Fatalf("the popup is not anchored at the prompt: header %+v prompt %+v", header, prompt)
 	}
 }
 

@@ -120,13 +120,18 @@ func TestAutocompleteCellWidth(t *testing.T) {
 	}
 }
 
-// placeForTest places the popup with the fallback cell estimate, so the
-// arithmetic these cases assert (flip, clamp, shrink) is exercised without a
-// measured font. The measured-cell path only replaces the inputs, not the
-// logic.
+// placeForTest places the popup the way the Pane's capture drives it: the
+// cursor row's box is where the cursor's screen row would render in an empty
+// flow — the screen rows count down the whole box exactly there — so these
+// cases exercise the flip, clamp and shrink arithmetic with the visual inputs
+// the placement really consumes, without a measured font.
 func placeForTest(bounds ui.Rect, cursor autocompleteCursor, cols, rows, suggestions int, popup, ghost bool) autocompletePlacement {
-	return placeAutocomplete(bounds, cursor, cols, rows, suggestions, popup, ghost,
-		appview.CellGeometry{}, terminalPaddingX, terminalPaddingY)
+	insetX, insetY := appview.LiveGridPadding()
+	cellH := (bounds.H - 2*insetY) / float32(rows)
+	rowTop := bounds.Y + insetY + float32(cursor.Row)*cellH
+	cursorRow := ui.Rect{X: bounds.X + insetX, Y: rowTop, W: bounds.W - 2*insetX, H: cellH}
+	return placeAutocomplete(bounds, cursorRow, cursor, cols, rows, suggestions, popup, ghost,
+		appview.CellGeometry{W: (bounds.W - 2*insetX) / float32(cols), H: cellH})
 }
 
 func TestPlaceAutocompleteFlipsAndClamps(t *testing.T) {
@@ -134,14 +139,15 @@ func TestPlaceAutocompleteFlipsAndClamps(t *testing.T) {
 	const cols, rows = 80, 24
 	promptBottom := autocompleteCursor{Row: rows - 1, Column: 5, StartRow: rows - 1}
 	promptTop := autocompleteCursor{Row: 0, Column: 5, StartRow: 0}
-	cellH := (terminal.H - 2*terminalPaddingY) / rows
+	insetX, insetY := appview.LiveGridPadding()
+	cellH := (terminal.H - 2*insetY) / rows
 
 	t.Run("prompt at the bottom opens upward above the input line", func(t *testing.T) {
 		placement := placeForTest(terminal, promptBottom, cols, rows, 7, true, false)
 		if !placement.ShowPopup || placement.Rows != maxVisibleSuggestions {
 			t.Fatalf("placement = %+v", placement)
 		}
-		inputTop := terminal.Y + terminalPaddingY + float32(rows-1)*cellH
+		inputTop := terminal.Y + insetY + float32(rows-1)*cellH
 		bottom := placement.PopupTop + autocompletePopupHeight(placement.Rows)
 		if bottom > inputTop-1 {
 			t.Fatalf("popup bottom %v covers input top %v: %+v", bottom, inputTop, placement)
@@ -154,7 +160,7 @@ func TestPlaceAutocompleteFlipsAndClamps(t *testing.T) {
 
 	t.Run("prompt at the top opens downward below the input line", func(t *testing.T) {
 		placement := placeForTest(terminal, promptTop, cols, rows, 2, true, false)
-		inputBottom := terminal.Y + terminalPaddingY + cellH
+		inputBottom := terminal.Y + insetY + cellH
 		if placement.PopupTop < inputBottom {
 			t.Fatalf("popup top %v is above the input bottom %v", placement.PopupTop, inputBottom)
 		}
@@ -170,7 +176,7 @@ func TestPlaceAutocompleteFlipsAndClamps(t *testing.T) {
 		if placement.GhostTop < popupBottom {
 			t.Fatalf("ghost overlaps the popup: %+v", placement)
 		}
-		inputTop := terminal.Y + terminalPaddingY + float32(rows-1)*cellH
+		inputTop := terminal.Y + insetY + float32(rows-1)*cellH
 		if placement.GhostTop+autocompleteGhostHeight > inputTop-1 {
 			t.Fatalf("ghost covers the input line: %+v", placement)
 		}
@@ -185,8 +191,8 @@ func TestPlaceAutocompleteFlipsAndClamps(t *testing.T) {
 		if placement.Rows < 1 {
 			t.Fatalf("no row shown: %+v", placement)
 		}
-		top := short.Y + terminalPaddingY
-		bottom := short.Y + short.H - terminalPaddingY
+		top := short.Y + insetY
+		bottom := short.Y + short.H - insetY
 		if placement.PopupTop < top-0.5 || placement.PopupTop+autocompletePopupHeight(placement.Rows) > bottom+0.5 {
 			t.Fatalf("popup outside the short pane: %+v", placement)
 		}
@@ -194,10 +200,10 @@ func TestPlaceAutocompleteFlipsAndClamps(t *testing.T) {
 
 	t.Run("a cursor at the right edge keeps the popup inside", func(t *testing.T) {
 		placement := placeForTest(terminal, autocompleteCursor{Row: rows - 1, Column: cols - 1, StartRow: rows - 1}, cols, rows, 2, true, false)
-		if placement.Left+placement.Width > terminal.X+terminal.W-terminalPaddingX+0.5 {
+		if placement.Left+placement.Width > terminal.X+terminal.W-insetX+0.5 {
 			t.Fatalf("popup overflows the right edge: %+v", placement)
 		}
-		if placement.Left < terminal.X+terminalPaddingX-0.5 {
+		if placement.Left < terminal.X+insetX-0.5 {
 			t.Fatalf("popup left of the terminal: %+v", placement)
 		}
 	})
@@ -205,22 +211,34 @@ func TestPlaceAutocompleteFlipsAndClamps(t *testing.T) {
 	t.Run("a pane narrower than the widest popup uses its width", func(t *testing.T) {
 		narrow := ui.Rect{X: 40, Y: 20, W: 220, H: 400}
 		placement := placeForTest(narrow, promptBottom, cols, rows, 4, true, false)
-		if placement.Width > narrow.W-2*terminalPaddingX+0.5 {
+		if placement.Width > narrow.W-2*insetX+0.5 {
 			t.Fatalf("width %v exceeds the pane %v", placement.Width, narrow.W)
 		}
 		assertInsideTerminal(t, narrow, placement)
+	})
+
+	t.Run("a scrolled-out cursor row keeps the popup inside the viewport", func(t *testing.T) {
+		// The reader scrolls toward the start with the popup open: the
+		// captured cursor row — window coordinates — moves below the visible
+		// area, and the upward placement must not follow it out over whatever
+		// sits below the terminal.
+		scrolledRow := ui.Rect{X: terminal.X + 16, Y: terminal.Y + terminal.H + 40, W: 600, H: cellH}
+		placement := placeAutocomplete(terminal, scrolledRow, promptBottom, cols, rows, 4, true, true,
+			appview.CellGeometry{W: 8, H: cellH})
+		assertInsideTerminal(t, terminal, placement)
 	})
 }
 
 func assertInsideTerminal(t *testing.T, terminal ui.Rect, placement autocompletePlacement) {
 	t.Helper()
-	left := terminal.X + terminalPaddingX
-	right := terminal.X + terminal.W - terminalPaddingX
+	insetX, insetY := appview.LiveGridPadding()
+	left := terminal.X + insetX
+	right := terminal.X + terminal.W - insetX
 	if placement.Left < left-0.5 || placement.Left+placement.Width > right+0.5 {
 		t.Fatalf("popup %+v is not inside the terminal horizontally %v..%v", placement, left, right)
 	}
-	top := terminal.Y + terminalPaddingY
-	bottom := terminal.Y + terminal.H - terminalPaddingY
+	top := terminal.Y + insetY
+	bottom := terminal.Y + terminal.H - insetY
 	popupBottom := placement.PopupTop + autocompletePopupHeight(placement.Rows)
 	if placement.ShowPopup && (placement.PopupTop < top-0.5 || popupBottom > bottom+0.5) {
 		t.Fatalf("popup %+v is not inside the terminal vertically %v..%v", placement, top, bottom)

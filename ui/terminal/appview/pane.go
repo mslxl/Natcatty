@@ -117,6 +117,28 @@ type Hooks struct {
 	// not one this app draws. Nil, or nil rows for a block, falls back to the
 	// typed line alone; a prompt is never invented.
 	PromptRows func(blockID int) [][]ui.Span
+	// LiveAnchor receives where the live grid and its cursor row are, in
+	// window coordinates, every frame. The caller owns it because the Pane is
+	// rebuilt every frame, and reads it one frame behind — the same lag every
+	// layout consumer works with. An overlay anchored at the cursor (the
+	// autocomplete popup) cannot derive the position itself: the grid sits
+	// below the flow's finished blocks, it renders only the live tail rather
+	// than the terminal's whole screen, and the scroll container moves it —
+	// three offsets no screen-row arithmetic can reconstruct. The Pane draws
+	// the rows, so it is the one component that knows where they are. Nil
+	// records nothing.
+	LiveAnchor *LiveAnchor
+}
+
+// LiveAnchor is where the live grid's box and cursor row are in the window,
+// as the previous frame laid them out. Grid is the rounded background's
+// border box; CursorRow is the row the cursor is on. Both are visual
+// positions — the scroll container's offset is already in them — so an
+// overlay can anchor at them directly.
+type LiveAnchor struct {
+	Grid      ui.Rect
+	CursorRow ui.Rect
+	HasCursor bool
 }
 
 // MenuActions are the live screen's selection commands at the time a context
@@ -691,6 +713,26 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 	// clicking its blank area focuses the terminal, while a populated flow lets
 	// the live child grow into the space that remains after its history.
 	outer := ui.Column(c.Key(key)).Gap(0).FillWidth().Grow(1).Background(bg).Radius(4).Padding(livePad)
+	if hooks.LiveAnchor != nil {
+		// The box is the previous frame's: it exists only once the grid has
+		// been laid out, and it moves as finished blocks are inserted above
+		// and as the scroll container shifts. LocalToWindow maps it through
+		// both, where LayoutBounds would stop at the layout's own coordinates
+		// and leave the scroll's offset out. The cursor row is captured where
+		// it is drawn below.
+		if box := outer.LayoutBounds(); box.W > 0 {
+			x, y := outer.LocalToWindow(0, 0)
+			next := LiveAnchor{
+				Grid:      ui.Rect{X: x, Y: y, W: box.W, H: box.H},
+				CursorRow: hooks.LiveAnchor.CursorRow,
+				HasCursor: hooks.LiveAnchor.HasCursor,
+			}
+			if next != *hooks.LiveAnchor {
+				*hooks.LiveAnchor = next
+				c.Invalidate()
+			}
+		}
+	}
 	if !hasHistory {
 		outer.MinHeight(viewportHeight)
 	}
@@ -1004,6 +1046,20 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 				// blinks off or the reader scrolled away, so the flow does not
 				// jump when the overlay appears.
 				rowBox := ui.Column(c).Gap(0).FillWidth().Height(cellHeight)
+				if hooks.LiveAnchor != nil {
+					// The cursor row is the popup's anchor: it is where the line
+					// being typed is. Capture its box as the frame laid it out,
+					// mapped into the window the way the grid's box is above.
+					if rb := rowBox.LayoutBounds(); rb.W > 0 {
+						x, y := rowBox.LocalToWindow(0, 0)
+						row := ui.Rect{X: x, Y: y, W: rb.W, H: rb.H}
+						if hooks.LiveAnchor.CursorRow != row || !hooks.LiveAnchor.HasCursor {
+							hooks.LiveAnchor.CursorRow = row
+							hooks.LiveAnchor.HasCursor = true
+							c.Invalidate()
+						}
+					}
+				}
 				rowBox.Children(func() {
 					gridRow(c, spans, rowSize)
 					// Keep the whole cursor cell visible while following.

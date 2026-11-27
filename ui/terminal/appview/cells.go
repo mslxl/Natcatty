@@ -151,9 +151,17 @@ func LiveGridCell() CellGeometry { return CellGeometry{W: cellWidth, H: cellHeig
 
 // LiveGridInset is where the live grid's first cell starts inside the pane
 // element, in DIPs: the flow's vertical margin plus the live box's own
-// padding. It is exported for the same overlay positioning LiveGridCell
-// serves.
+// padding. It is exact only when no finished blocks precede the grid — the
+// grid moves down as the flow gains them — so an overlay that has the grid's
+// own box uses LiveGridPadding against that box instead. It is exported for
+// the same overlay positioning LiveGridCell serves.
 func LiveGridInset() (x, y float32) { return flowPadY + livePad, flowPadY + livePad }
+
+// LiveGridPadding is where the live grid's first cell starts inside the grid's
+// own border box, in DIPs: the rounded background's padding ring on every
+// side. Overlay positioning that has the grid's box strips this to reach the
+// cells.
+func LiveGridPadding() (x, y float32) { return livePad, livePad }
 
 // availableWidth and availableHeight are the room the live screen gets, measured from
 // the flow's own layout (a scroller knows its viewport in the same frame it is built).
