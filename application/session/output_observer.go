@@ -42,10 +42,14 @@ func (s *Session) SubscribeOutputReplay(fn func([]byte)) func() {
 	if fn == nil {
 		return func() {}
 	}
+	s.outputDeliverMu.Lock()
 	s.outputObserverMu.Lock()
-	if replay := s.outputReplay.snapshot(); len(replay) > 0 {
+	replay := s.outputReplay.snapshot()
+	s.outputObserverMu.Unlock()
+	if len(replay) > 0 {
 		fn(replay)
 	}
+	s.outputObserverMu.Lock()
 	if s.outputObservers == nil {
 		s.outputObservers = make(map[uint64]func([]byte))
 	}
@@ -53,6 +57,7 @@ func (s *Session) SubscribeOutputReplay(fn func([]byte)) func() {
 	id := s.nextOutputID
 	s.outputObservers[id] = fn
 	s.outputObserverMu.Unlock()
+	s.outputDeliverMu.Unlock()
 
 	var once sync.Once
 	return func() {
@@ -64,18 +69,65 @@ func (s *Session) SubscribeOutputReplay(fn func([]byte)) func() {
 	}
 }
 
-func (s *Session) publishOutput(data []byte) {
-	if len(data) == 0 {
-		return
+// SubscribeOutputFilterReplay is SubscribeOutputReplay for a consumer that may
+// strip captured binary payload bytes from the stream before it continues on to
+// the terminal tap, highlighter, replay buffer, and visible terminal.
+func (s *Session) SubscribeOutputFilterReplay(fn func([]byte) []byte) func() {
+	if fn == nil {
+		return func() {}
+	}
+	s.outputDeliverMu.Lock()
+	s.outputObserverMu.Lock()
+	replay := s.outputReplay.snapshot()
+	s.outputObserverMu.Unlock()
+	if len(replay) > 0 {
+		fn(replay)
 	}
 	s.outputObserverMu.Lock()
-	s.outputReplay.append(data)
+	if s.outputFilters == nil {
+		s.outputFilters = make(map[uint64]func([]byte) []byte)
+	}
+	s.nextOutputID++
+	id := s.nextOutputID
+	s.outputFilters[id] = fn
+	s.outputObserverMu.Unlock()
+	s.outputDeliverMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.outputObserverMu.Lock()
+			delete(s.outputFilters, id)
+			s.outputObserverMu.Unlock()
+		})
+	}
+}
+
+func (s *Session) publishOutput(data []byte) []byte {
+	if len(data) == 0 {
+		return nil
+	}
+	s.outputDeliverMu.Lock()
+	defer s.outputDeliverMu.Unlock()
+	s.outputObserverMu.Lock()
 	listeners := make([]func([]byte), 0, len(s.outputObservers))
 	for _, fn := range s.outputObservers {
 		listeners = append(listeners, fn)
+	}
+	filters := make([]func([]byte) []byte, 0, len(s.outputFilters))
+	for _, fn := range s.outputFilters {
+		filters = append(filters, fn)
 	}
 	s.outputObserverMu.Unlock()
 	for _, fn := range listeners {
 		fn(data)
 	}
+	filtered := data
+	for _, fn := range filters {
+		filtered = fn(filtered)
+	}
+	s.outputObserverMu.Lock()
+	s.outputReplay.append(filtered)
+	s.outputObserverMu.Unlock()
+	return filtered
 }

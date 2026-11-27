@@ -154,6 +154,13 @@ type tapState struct {
 	HookActive bool
 	// BracketedPaste reports that the peer enabled DECSET 2004.
 	BracketedPaste bool
+	// PromptNoRedraw reports that the shell's prompt-start mark said
+	// `redraw=0`: the shell will not draw its prompt again when the window is
+	// resized, so the terminal is the one that reflows the prompt. That promise
+	// is what keeps a resize from drawing the prompt twice — once by the shell
+	// and once by the reflow — which is how the pane's rows came apart when a
+	// window came back from the background.
+	PromptNoRedraw bool
 	Busy           bool
 	LastActivity   time.Time
 	Notification   *TerminalNotification
@@ -247,6 +254,10 @@ type terminalTap struct {
 	// nativeSeen reports that the shell emitted OSC 133 or OSC 7. Without it,
 	// typed input plus prompt detection is Tier 3; with it, capture is Tier 2.
 	nativeSeen bool
+
+	// promptNoRedraw is what the shell's last prompt-start mark promised about
+	// redrawing (OSC 133;A;redraw=0).
+	promptNoRedraw bool
 	// hookActive reports that the session-scoped Netcatty hook emitted its
 	// private sequence. It is not a tier by itself: a command is Tier 1 only
 	// when the private sequence replaced or started it.
@@ -820,6 +831,10 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 	switch kind {
 	case 'A':
 		t.nativeSeen = true
+		// The mark may say `redraw=0`: the shell promises not to draw its
+		// prompt again on a resize, and the terminal reflows it instead. A
+		// shell that does not promise (the default) gets the old behaviour.
+		t.promptNoRedraw = strings.Contains(rest[1:], "redraw=0")
 		if t.hookExpected && !t.hookSeen {
 			// Every capture hook announces itself at the prompt before this
 			// mark. A prompt without that handshake means the shell is running
@@ -2239,6 +2254,7 @@ func (t *terminalTap) state(now time.Time) tapState {
 		InputCursor:    t.inputCursor,
 		HookActive:     t.hookActive,
 		BracketedPaste: t.bracketedPaste,
+		PromptNoRedraw: t.promptNoRedraw,
 		Busy:           t.busyLocked(now),
 		LastActivity:   t.lastOutput,
 		Transfer:       t.transfer,
