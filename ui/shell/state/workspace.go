@@ -2900,7 +2900,7 @@ func (s *State) openDescriptor(ctx context.Context,
 	// record to resolve. Its one-shot password was stored encrypted in memory
 	// when the Pane opened, and only lives until the Pane closes.
 	if descriptor.HostID == "" {
-		if password, ok := s.paneCredentials.get(paneID); ok {
+		if password, ok := s.paneCredentials.Get(string(paneID)); ok {
 			spec.Password = password
 		}
 	}
@@ -3236,7 +3236,7 @@ func (s *State) dropPaneCredential(value *pane) {
 	if value == nil || s.paneCredentials == nil {
 		return
 	}
-	s.paneCredentials.drop(value.ID)
+	s.paneCredentials.Drop(string(value.ID))
 }
 
 // removeTabAt removes the Tab at index and keeps the active index valid. It

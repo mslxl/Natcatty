@@ -6,6 +6,11 @@
 - Keep code readable; do not sacrifice clarity for overly compressed or "clever" shortcuts.
 - Avoid unnecessary layers of indirection.
 
+## Credentials and encryption
+
+- Encryption work is cross-platform by default: a credential protection added to the desktop shell must also land on the phone shell, and vice versa. When you touch one side's credential handling, check the other side and align it in the same change.
+- In-memory credentials are never held as plaintext. Use the shared encrypted store (`appsession.MemCredentialStore`, AES-256-GCM sealed under a random per-run key) rather than a plaintext field, and drop entries when their owner (Pane, Session) closes.
+
 ## Testing
 
 - Run UI and application tests headlessly with MyGo's headless tester (`ui.NewTester` via `go test`); do not launch a foreground GUI window to run tests.

@@ -322,7 +322,7 @@ type State struct {
 	// in memory until the Pane closes, so a retry of a failed dial can offer
 	// the same credential again. It is never written to the Workspace
 	// descriptor or the Vault.
-	paneCredentials *paneSecrets
+	paneCredentials *appsession.MemCredentialStore
 
 	// workspace persists layout changes and supplies the restore payload.
 	workspace   *appworkspace.Service
@@ -865,7 +865,7 @@ func NewState(opts ...Option) *State {
 	}
 	// A failed key generation must not prevent the shell from starting: the
 	// only loss is that a Quick Connect retry cannot reuse the password.
-	if credentials, err := newPaneSecrets(); err == nil {
+	if credentials, err := appsession.NewMemCredentialStore(); err == nil {
 		s.paneCredentials = credentials
 	}
 	for _, opt := range opts {
@@ -946,7 +946,7 @@ func (s *State) Shutdown() {
 		s.cancel()
 	}
 	if s.paneCredentials != nil {
-		s.paneCredentials.wipe()
+		s.paneCredentials.Wipe()
 	}
 	s.ReleasePaneGhosts()
 	s.ReleaseTabGhosts()
@@ -1319,7 +1319,7 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 		// An Unsaved Host's retry has no Vault to read the credential from. Keep
 		// the one-shot password encrypted in memory so a retry of a failed dial
 		// offers it again; closePane drops it when the Pane leaves the layout.
-		_ = s.paneCredentials.set(paneID, password)
+		_ = s.paneCredentials.Set(string(paneID), password)
 	}
 
 	ctx := s.ctx
@@ -1647,7 +1647,7 @@ func (s *State) applyPendingHostOutcome(outcome openOutcome) {
 		// The user closed the Pane while the dial was running. Its one-shot
 		// Quick Connect credential goes with it.
 		if s.paneCredentials != nil {
-			s.paneCredentials.drop(outcome.paneID)
+			s.paneCredentials.Drop(string(outcome.paneID))
 		}
 		if outcome.session != nil {
 			_ = outcome.session.Close()

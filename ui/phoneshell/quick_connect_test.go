@@ -256,3 +256,80 @@ func TestQuickConnectCancelForgetsTheSecret(t *testing.T) {
 		t.Fatalf("reopened form secret = %q, want it cleared", got)
 	}
 }
+
+// TestQuickConnectSecretIsSealedInMemory proves the phone keeps the one-shot
+// credential the same way the desktop does: sealed in the encrypted in-memory
+// store under the Pane's identity, never as plaintext on the Pane, passed to
+// every reopen, and dropped when the Pane closes.
+func TestQuickConnectSecretIsSealedInMemory(t *testing.T) {
+	fixture, opener := newQuickConnectFixture(t, "quick ready")
+	openQuickConnectForm(t, fixture)
+
+	typeInto(t, fixture.tester, "Target", "deploy@example.com")
+	typeInto(t, fixture.tester, "Password (optional)", "hunter2")
+	click(t, fixture.tester, "Connect")
+
+	fixture.await(t, "the Quick Connect Session to attach", func() bool {
+		handle := fixture.opener.last()
+		return opener.targetCount() == 1 && handle != nil && handle.isAttached()
+	})
+
+	_, secret, ok := opener.target()
+	if !ok || secret != "hunter2" {
+		t.Fatalf("first open secret = %q, %v; want the typed password", secret, ok)
+	}
+
+	// The Pane struct never holds plaintext: the credential lives only in the
+	// encrypted store, keyed by the Pane's identity.
+	tabs := fixture.shell.sessions
+	tabs.mu.Lock()
+	var pane *phonePane
+	for _, tab := range tabs.tabs {
+		for _, candidate := range tab.panes {
+			if candidate.unsaved {
+				pane = candidate
+			}
+		}
+	}
+	tabs.mu.Unlock()
+	if pane == nil {
+		t.Fatal("the Quick Connect Pane does not exist")
+	}
+	if !pane.unsavedSecret {
+		t.Fatal("the Pane does not record that it holds a one-shot credential")
+	}
+	stored, ok := tabs.credentials.Get(string(pane.id))
+	if !ok || stored != "hunter2" {
+		t.Fatalf("stored credential = %q, %v; want the typed password", stored, ok)
+	}
+	// A reopen of the same Pane offers the credential again.
+	fixture.shell.launchPane(paneTabID(t, tabs, pane), string(pane.id))
+	fixture.await(t, "the reopen to reach the opener", func() bool {
+		return opener.targetCount() == 2
+	})
+	_, reopened, _ := opener.target()
+	if reopened != "hunter2" {
+		t.Fatalf("reopen secret = %q, want the stored password reused", reopened)
+	}
+
+	// Closing the Pane drops the credential.
+	tabs.removePane(paneTabID(t, tabs, pane), string(pane.id))
+	if _, ok := tabs.credentials.Get(string(pane.id)); ok {
+		t.Fatal("the credential survived the Pane close")
+	}
+}
+
+func paneTabID(t *testing.T, tabs *sessionTabs, pane *phonePane) string {
+	t.Helper()
+	tabs.mu.Lock()
+	defer tabs.mu.Unlock()
+	for _, tab := range tabs.tabs {
+		for _, candidate := range tab.panes {
+			if candidate == pane {
+				return tab.id
+			}
+		}
+	}
+	t.Fatal("the Pane has no Tab")
+	return ""
+}

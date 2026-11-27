@@ -202,10 +202,13 @@ type phonePane struct {
 	// Its Host is an Unsaved Host with no Vault record, so the opener must
 	// accept the target directly instead of resolving a saved Host by ID.
 	unsaved bool
-	// unsavedSecret is the one-shot password the Quick Connect form supplied.
-	// It travels only into this Session's StartSpec and is never persisted: an
-	// Unsaved Host is not saved as a Vault record or a restore descriptor.
-	unsavedSecret string
+	// unsavedSecret reports that the Quick Connect form supplied a one-shot
+	// password for this Pane. The password itself never sits on the Pane: it
+	// is sealed in the shell's in-memory credential store under this Pane's
+	// identity, travels only into the Session's StartSpec, and is dropped when
+	// the Pane closes. An Unsaved Host is never persisted as a Vault record or
+	// a restore descriptor.
+	unsavedSecret bool
 	// startup is a command typed once the Session is ready, used by tmux
 	// attach and a Pod terminal. It is not persisted: reopening the Host later
 	// starts its normal shell.
@@ -534,6 +537,11 @@ type sessionTabs struct {
 	// store persists the Tabs a relaunch lists. nil means this Shell forgets
 	// its Tabs at exit; it never fails navigation.
 	store SessionStore
+	// credentials keeps a Quick Connect Pane's one-shot password encrypted in
+	// memory until the Pane closes, keyed by Pane identity. It is never
+	// written to the restore payload or the Vault — the same rule the desktop
+	// shell follows. Nil downgrades a reopen to a dial without the credential.
+	credentials *appsession.MemCredentialStore
 	// restored records that this launch's persisted Tabs were read once, so a
 	// reload cannot duplicate them.
 	restored bool
@@ -647,12 +655,18 @@ func (t *sessionTabs) beginWith(host domainvault.Host, unsaved bool, secret stri
 	tab := &phoneTab{id: t.newTabIDLocked(), label: hostName(host)}
 	pane := t.newPaneLocked(tab, host)
 	pane.unsaved = unsaved
-	pane.unsavedSecret = secret
+	pane.unsavedSecret = secret != ""
 	t.attachPaneLocked(tab, pane)
 	tab.focus = pane.id
 	tab.number = len(t.tabs) + 1
 	t.tabs = append(t.tabs, tab)
 	t.mu.Unlock()
+	if secret != "" {
+		// The one-shot password is sealed under the Pane's identity so the
+		// struct never carries plaintext. removePane drops it; until then every
+		// reopen of this Pane can offer it again.
+		_ = t.credentials.Set(string(pane.id), secret)
+	}
 	// The Tab exists the moment it is opened: an app suspended mid-connect
 	// still lists it after a relaunch.
 	t.persist()
@@ -1706,6 +1720,7 @@ func (t *sessionTabs) remove(id string) bool {
 			t.pendingClose = nil
 		}
 		panes := tab.panes
+		credentials := t.credentials
 		t.mu.Unlock()
 		for _, pane := range panes {
 			if pane.cancel != nil {
@@ -1721,6 +1736,9 @@ func (t *sessionTabs) remove(id string) bool {
 			// dedicated channel lease; closing the Tab must release it.
 			pane.tools.closeBrowser()
 			pane.tools.closeFiles()
+			// The Pane is gone: its Quick Connect one-shot credential must not
+			// outlive it.
+			credentials.Drop(string(pane.id))
 		}
 		// A closed Tab is no longer a Session a relaunch lists.
 		t.persist()
@@ -1770,6 +1788,9 @@ func (t *sessionTabs) removePane(tabID, paneID string) bool {
 	// The Pane's Browser and Files, if any, held channel leases of their own.
 	pane.tools.closeBrowser()
 	pane.tools.closeFiles()
+	// The Pane is gone: its Quick Connect one-shot credential must not outlive
+	// it.
+	t.credentials.Drop(string(pane.id))
 	// An empty Tab is deliberately not persisted; payloadOf omits it.
 	t.persist()
 	return true
@@ -1812,7 +1833,14 @@ func (t *sessionTabs) closeAll() {
 	payload := payloadOf(tabs)
 	t.tabs = nil
 	t.pendingClose = nil
+	credentials := t.credentials
 	t.mu.Unlock()
+	// The app is quitting: every Quick Connect one-shot credential dies with
+	// it, even when a Tab is persisted for the next launch. An Unsaved Host is
+	// never part of the restore payload, so no reopen could use them.
+	if credentials != nil {
+		credentials.Wipe()
+	}
 	for _, tab := range tabs {
 		for _, pane := range tab.panes {
 			if pane.cancel != nil {

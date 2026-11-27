@@ -657,7 +657,7 @@ func TestQuickConnectRetryAfterAFailedDial(t *testing.T) {
 	}
 
 	// The credential lives only as long as the Pane: closing the Tab drops it.
-	if _, ok := graph.state.paneCredentials.get(paneID); !ok {
+	if _, ok := graph.state.paneCredentials.Get(string(paneID)); !ok {
 		t.Fatal("the in-memory credential was dropped before the Pane closed")
 	}
 	graph.state.CloseTab(0)
@@ -665,7 +665,7 @@ func TestQuickConnectRetryAfterAFailedDial(t *testing.T) {
 	// releasing it is what ends the Sessions and drops the credentials.
 	graph.state.ReleasePaneGhosts()
 	graph.state.ReleaseTabGhosts()
-	if _, ok := graph.state.paneCredentials.get(paneID); ok {
+	if _, ok := graph.state.paneCredentials.Get(string(paneID)); ok {
 		t.Fatal("the in-memory credential survived the Pane close")
 	}
 }
