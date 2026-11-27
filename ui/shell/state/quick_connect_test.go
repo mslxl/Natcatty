@@ -1,10 +1,13 @@
 package state
 
 import (
+	"errors"
 	"testing"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 )
 
 // TestQuickConnectOpensAnUnsavedHostSession is the quick-connect contract: the
@@ -594,4 +597,88 @@ func TestQuickConnectVNCWebSocketSeedsFromTheVisibleDisplayNotAHiddenPort(t *tes
 	if got, want := form.Port, "6080"; got != want {
 		t.Fatalf("WebSocket port = %q, want %q from the visible display 0", got, want)
 	}
+}
+
+// TestQuickConnectRetryAfterAFailedDial is the regression test for the missing
+// retry: an Unsaved Host has no Vault record, so the descriptor-driven reopen
+// must not look one up, and the typed one-shot password must reach the redial
+// exactly as it reached the first dial. The workspace graph wires the Host
+// resolver production uses, so a lookup of the empty Host ID would fail
+// exactly as the user's report described.
+func TestQuickConnectRetryAfterAFailedDial(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	var attempts int
+	graph.factory.fail = func(appsession.StartSpec) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("fake: the endpoint refused the connection")
+		}
+		return nil
+	}
+	graph.state.OpenQuickConnect()
+	form := graph.state.QuickConnectForm()
+	form.Hostname = "switch.local"
+	form.Username = "admin"
+	form.Password = "s3cret"
+	if err := graph.state.ConnectQuickConnect(); err != nil {
+		t.Fatalf("ConnectQuickConnect: %v", err)
+	}
+
+	paneID := onlyPaneID(t, graph.state, 0)
+	graph.flushUntil(t, "the failed dial", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, paneID)
+		return ok && !info.Pending && info.Err != nil
+	})
+	if graph.factory.specCount() != 1 {
+		t.Fatalf("dials = %d, want exactly the first attempt", graph.factory.specCount())
+	}
+	if info, _ := graph.state.PaneInfoAt(0, paneID); errors.Is(info.Err, ErrHostUnavailable) {
+		t.Fatal("the failed Unsaved Host dial was misreported as a missing Host")
+	}
+
+	// The endpoint comes back; the retry must redial the same endpoint with
+	// the typed password, without any Vault lookup.
+	tabID, ok := graph.state.TabID(0)
+	if !ok {
+		t.Fatal("the quick-connect Tab has no identity")
+	}
+	if !graph.state.RetryPane(tabID, paneID) {
+		t.Fatal("RetryPane refused the failed quick-connect Pane")
+	}
+	graph.flushUntil(t, "the retried dial", func() bool {
+		return graph.factory.specCount() == 2
+	})
+	spec := graph.factory.lastSpec()
+	if spec.HostID != "" || spec.Hostname != "switch.local" || spec.Username != "admin" {
+		t.Fatalf("retry spec = %+v, want the same unsaved endpoint", spec)
+	}
+	if spec.Password != "s3cret" {
+		t.Fatalf("retry spec password = %q, want the one-shot password reused", spec.Password)
+	}
+
+	// The credential lives only as long as the Pane: closing the Tab drops it.
+	if _, ok := graph.state.paneCredentials.get(paneID); !ok {
+		t.Fatal("the in-memory credential was dropped before the Pane closed")
+	}
+	graph.state.CloseTab(0)
+	// A Tab close with motion on retains the body as an exit ghost; the view
+	// releasing it is what ends the Sessions and drops the credentials.
+	graph.state.ReleasePaneGhosts()
+	graph.state.ReleaseTabGhosts()
+	if _, ok := graph.state.paneCredentials.get(paneID); ok {
+		t.Fatal("the in-memory credential survived the Pane close")
+	}
+}
+
+func onlyPaneID(t *testing.T, s *State, index int) model.PaneID {
+	t.Helper()
+	root, _, ok := s.TabTree(index)
+	if !ok {
+		t.Fatalf("Tab %d does not exist", index)
+	}
+	ids := domainworkspace.CollectPaneIDs(root)
+	if len(ids) != 1 {
+		t.Fatalf("Tab %d panes = %v, want exactly one", index, ids)
+	}
+	return ids[0]
 }

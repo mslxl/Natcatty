@@ -318,6 +318,11 @@ type State struct {
 	// unsupported, or an ET Pane closed while its Session never opened. Nil
 	// leaves such stale pairs in place.
 	etResumeStore ETResumeStore
+	// paneCredentials keeps a Quick Connect Pane's one-shot password encrypted
+	// in memory until the Pane closes, so a retry of a failed dial can offer
+	// the same credential again. It is never written to the Workspace
+	// descriptor or the Vault.
+	paneCredentials *paneSecrets
 
 	// workspace persists layout changes and supplies the restore payload.
 	workspace   *appworkspace.Service
@@ -858,6 +863,11 @@ func NewState(opts ...Option) *State {
 		composeTargets:    make(map[model.SessionID]bool),
 		composeLineMode:   appsession.ComposePaste,
 	}
+	// A failed key generation must not prevent the shell from starting: the
+	// only loss is that a Quick Connect retry cannot reuse the password.
+	if credentials, err := newPaneSecrets(); err == nil {
+		s.paneCredentials = credentials
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -927,12 +937,16 @@ func (s *State) clearPending(label string) {
 	}
 }
 
-// Shutdown cancels pending connections and trust prompts, and releases any
-// closing Pane or Tab whose ghost no view will draw. The app calls it on quit,
+// Shutdown cancels pending connections and trust prompts, releases any
+// closing Pane or Tab whose ghost no view will draw, and wipes the one-shot
+// credentials held for Quick Connect retries. The app calls it on quit,
 // before closing Sessions.
 func (s *State) Shutdown() {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	if s.paneCredentials != nil {
+		s.paneCredentials.wipe()
 	}
 	s.ReleasePaneGhosts()
 	s.ReleaseTabGhosts()
@@ -1284,7 +1298,8 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 
 	spec := HostSessionSpec(host)
 	// The one-shot password is never stored in the workspace descriptor; it
-	// only travels into this Session's StartSpec.
+	// only travels into this Session's StartSpec and, for an Unsaved Host,
+	// into the encrypted in-memory store a retry reads it back from.
 	spec.Password = password
 	resumeKey, x11 := spec.ResumeKey, spec.X11Forwarding
 	// The Tab exists before the dial finishes, so it can be opened while the
@@ -1300,6 +1315,12 @@ func (s *State) openHostWithPassword(host domainvault.Host, startup StartupInput
 		AutoAttachTmux: plan.tmux,
 		ResumeKey:      resumeKey,
 	})
+	if host.ID == "" && password != "" && s.paneCredentials != nil {
+		// An Unsaved Host's retry has no Vault to read the credential from. Keep
+		// the one-shot password encrypted in memory so a retry of a failed dial
+		// offers it again; closePane drops it when the Pane leaves the layout.
+		_ = s.paneCredentials.set(paneID, password)
+	}
 
 	ctx := s.ctx
 	go func() {
@@ -1623,7 +1644,11 @@ func (s *State) Flush() {
 func (s *State) applyPendingHostOutcome(outcome openOutcome) {
 	value := s.findPendingPane(outcome.tabID, outcome.paneID)
 	if value == nil {
-		// The user closed the Pane while the dial was running.
+		// The user closed the Pane while the dial was running. Its one-shot
+		// Quick Connect credential goes with it.
+		if s.paneCredentials != nil {
+			s.paneCredentials.drop(outcome.paneID)
+		}
 		if outcome.session != nil {
 			_ = outcome.session.Close()
 		}
