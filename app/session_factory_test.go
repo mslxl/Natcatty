@@ -1343,10 +1343,13 @@ func TestUnsavedHostUsesTheTerminalLegacyAlgorithmPreference(t *testing.T) {
 			// The Vault holds no record for an Unsaved Host. Resolving a
 			// route by its empty ID would fail, so a successful Open also
 			// proves the factory did not ask the Vault.
-			routes := vaultRoutes{vault: &fakeRouteVault{
-				hosts:   map[model.HostID]domainvault.Host{},
-				secrets: map[string]string{},
-			}}
+			routes := vaultRoutes{
+				vault: &fakeRouteVault{
+					hosts:   map[model.HostID]domainvault.Host{},
+					secrets: map[string]string{},
+				},
+				terminalSettings: factoryTerminalSettings{legacy: test.legacy},
+			}
 			factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes).
 				withTerminalSettings(factoryTerminalSettings{legacy: test.legacy})
 

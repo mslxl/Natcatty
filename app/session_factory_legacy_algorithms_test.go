@@ -70,8 +70,13 @@ func legacyAlgorithmFixture(t *testing.T, routes vaultRoutes, globalLegacy bool)
 			_ = conn.Close()
 		}
 	})
+	// The route source resolves an Unsaved Host's route in production, so the
+	// terminal-wide opt-in belongs to it; the factory's own seam covers a
+	// caller that supplies no route source.
+	settings := factoryTerminalSettings{legacy: globalLegacy}
+	routes.terminalSettings = settings
 	return newTransportFactory(&factoryLocal{}, nil, nil, manager, routes).
-		withTerminalSettings(factoryTerminalSettings{legacy: globalLegacy})
+		withTerminalSettings(settings)
 }
 
 // TestLegacyAlgorithmOptInDecidesTheHandshake drives a real negotiation with a
