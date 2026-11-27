@@ -177,45 +177,16 @@ func (p *netPing) View(state any) (lens.Node, error) {
 	if !st.any {
 		return nil, nil
 	}
-	tone := toneSuccess
-	switch {
-	case st.hasLoss && st.loss >= 5:
-		tone = toneError
-	case st.hasLoss && st.loss > 0:
-		tone = toneWarning
-	}
 
-	var spans []lens.Span
-	if st.hasStats && st.transmitted > 0 {
-		spans = append(spans, lens.Span{
-			Text:  fmt.Sprintf("%d transmitted, %d received", st.transmitted, st.received),
-			Style: "num",
-		})
-	}
-	if st.hasLoss {
-		if len(spans) > 0 {
-			spans = append(spans, lens.Span{Text: " · ", Style: toneMuted})
-		}
-		spans = append(spans, lens.Span{Text: fmt.Sprintf("%.1f%% loss", st.loss), Style: tone})
-	}
-	if st.min > 0 || st.avg > 0 || st.max > 0 {
-		if len(spans) > 0 {
-			spans = append(spans, lens.Span{Text: " · ", Style: toneMuted})
-		}
-		spans = append(spans, lens.Span{
-			Text:  fmt.Sprintf("rtt min/avg/max %.3f/%.3f/%.3f ms", st.min, st.avg, st.max),
-			Style: "num",
-		})
-	}
-	if len(spans) == 0 {
-		spans = append(spans, lens.Span{Text: "ping", Style: toneMuted})
-	}
-
-	children := []lens.Node{lens.Text{Spans: spans}}
-	// Terminal's net.ping span fields are `Addr/timeout/Current/Min/Max/StdDev`
-	// (strings near 149976960); show them with those names.
-	if kv := pingStats(st); len(kv.Items) > 0 {
-		children = append(children, kv)
+	// The net.ping block is one KV stack with the round trips drawn between
+	// the host and the figures: Host, then a bar per reply, then
+	// Min/Avg/Max/StdDev/Received/Loss. The block renders while the command
+	// runs, so the same shape shows the answers as they arrive; the final
+	// summary only fills in the authoritative packet counts.
+	host, stats := pingStats(st)
+	var children []lens.Node
+	if len(host.Items) > 0 {
+		children = append(children, host)
 	}
 	if len(st.samples) > 0 {
 		series := make([]lens.Series, 0, len(st.samples))
@@ -228,65 +199,104 @@ func (p *netPing) View(state any) (lens.Node, error) {
 		}
 		children = append(children, lens.Bars{Series: series})
 	}
-	badge := "0% loss"
-	if st.hasLoss {
-		badge = fmt.Sprintf("%.0f%% loss", st.loss)
+	if len(stats.Items) > 0 {
+		children = append(children, stats)
 	}
-	children = append(children, lens.Badge{Text: badge, Tone: tone})
+	if len(children) == 0 {
+		return nil, nil
+	}
 	return lens.Cols(children...), nil
 }
 
-// pingStats builds the Addr/Current/Min/Max/StdDev rows Terminal names for this
-// lens (strings near 149976960).
-func pingStats(st *pingState) lens.KV {
-	var kv lens.KV
-	add := func(k, v string) {
+// pingCounts is the packet tally the KV shows: the program's own summary when it
+// printed one, else the replies and timeouts seen so far. A running ping has no
+// summary yet, so the live block counts what arrived.
+func pingCounts(st *pingState) (received, total int, loss float64, hasLoss bool) {
+	if st.hasStats && st.transmitted > 0 {
+		return st.received, st.transmitted, st.loss, st.hasLoss
+	}
+	total = len(st.samples)
+	received = total - st.timeouts
+	if total > 0 {
+		loss = float64(st.timeouts) / float64(total) * 100
+		hasLoss = true
+	}
+	return received, total, loss, hasLoss
+}
+
+// pingStats builds the two KV stacks the ping block shows: the host above the
+// bars, the figures below them.
+func pingStats(st *pingState) (host, stats lens.KV) {
+	add := func(kv *lens.KV, k, v, style string) {
 		kv.Items = append(kv.Items, [2][]lens.Span{
 			{{Text: k, Style: "muted"}},
-			{{Text: v, Style: "num"}},
+			{{Text: v, Style: style}},
 		})
 	}
-	add("Addr", st.addr)
-	if st.timeouts > 0 {
-		kv.Items = append(kv.Items, [2][]lens.Span{
-			{{Text: "timeout", Style: "muted"}},
-			{{Text: strconv.Itoa(st.timeouts), Style: "error num"}},
-		})
+	if st.addr != "" {
+		add(&host, "Host", st.addr, "strong")
 	}
+
 	var rtts []float64
-	current := ""
 	for _, s := range st.samples {
-		if s.timeout {
-			continue
+		if !s.timeout {
+			rtts = append(rtts, s.rtt)
 		}
-		rtts = append(rtts, s.rtt)
-		current = fmt.Sprintf("%.3f ms", s.rtt)
 	}
-	if current != "" {
-		add("Current", current)
-	}
+	var lo, hi, avg, stddev float64
 	if len(rtts) > 0 {
-		min, max, sum := rtts[0], rtts[0], 0.0
+		lo, hi, avg = rtts[0], rtts[0], 0.0
 		for _, v := range rtts {
-			if v < min {
-				min = v
+			if v < lo {
+				lo = v
 			}
-			if v > max {
-				max = v
+			if v > hi {
+				hi = v
 			}
-			sum += v
+			avg += v
 		}
-		avg := sum / float64(len(rtts))
+		avg /= float64(len(rtts))
 		varsum := 0.0
 		for _, v := range rtts {
 			d := v - avg
 			varsum += d * d
 		}
-		add("Min", fmt.Sprintf("%.3f ms", min))
-		add("Max", fmt.Sprintf("%.3f ms", max))
-		add("StdDev", fmt.Sprintf("%.3f ms", math.Sqrt(varsum/float64(len(rtts)))))
+		stddev = math.Sqrt(varsum / float64(len(rtts)))
 	}
-	return kv
+	// The program's summary wins when it printed one: it knows every packet,
+	// including the ones still in flight when this block was built.
+	if st.min > 0 || st.avg > 0 || st.max > 0 {
+		lo, avg, hi = st.min, st.avg, st.max
+	}
+	ms := func(v float64) string { return fmt.Sprintf("%.3f ms", v) }
+	if len(rtts) > 0 || st.hasStats {
+		add(&stats, "Min", ms(lo), "num")
+		add(&stats, "Avg", ms(avg), "num")
+		add(&stats, "Max", ms(hi), "num")
+		add(&stats, "StdDev", ms(stddev), "num")
+	}
+	received, total, loss, hasLoss := pingCounts(st)
+	if total > 0 {
+		add(&stats, "Received", fmt.Sprintf("%d of %d", received, total), "num")
+	}
+	if hasLoss || total > 0 {
+		style := "num success"
+		switch {
+		case loss >= 5:
+			style = "num error"
+		case loss > 0:
+			style = "num warning"
+		}
+		add(&stats, "Loss", fmt.Sprintf("%s%%", trimZero(loss)), style)
+	}
+	return host, stats
+}
+
+// trimZero prints a percentage the way ping's own summary does: "0%", "12.5%".
+func trimZero(v float64) string {
+	s := strconv.FormatFloat(v, 'f', 1, 64)
+	s = strings.TrimSuffix(s, ".0")
+	return s
 }
 
 // pingWindowsLine parses the shape Windows' ping prints (`Reply from … time=1ms`,
