@@ -51,6 +51,8 @@ package lensview
 import (
 	"fmt"
 	"hash/fnv"
+	"image"
+	"image/color"
 	"strconv"
 	"strings"
 	"sync"
@@ -3380,33 +3382,196 @@ var (
 	imgCache   = map[string]*ui.Bitmap{}
 	imgOpenMu  sync.Mutex
 	imgOpen    = map[string]bool{}
+	// growingCache holds the one bitmap a still-arriving picture draws into, by
+	// the block's path. Reusing it keeps a single texture across the chunks
+	// instead of one per prefix.
+	growingMu     sync.Mutex
+	growingCache  = map[string]*ui.Bitmap{}
+	growingStates = map[string]*Growing{}
 )
 
+func updateGrowingBitmap(growKey string, b *ui.Bitmap) {
+	growingMu.Lock()
+	defer growingMu.Unlock()
+	if len(growingCache) > 8 {
+		growingCache = map[string]*ui.Bitmap{}
+	}
+	growingCache[growKey] = b
+}
+
+func deleteGrowing(growKey string) {
+	growingMu.Lock()
+	g := growingStates[growKey]
+	delete(growingStates, growKey)
+	delete(growingCache, growKey)
+	growingMu.Unlock()
+	if g != nil {
+		g.Close()
+	}
+}
+
+// imageKey names one picture for the caches. It covers every byte of the data,
+// so two different states of a picture can never share an entry: a sampled hash
+// let a half-arrived picture and the whole file collide once, and the finished
+// block then drew the half-filled bitmap (its top third, with the rest empty).
+//
+// The cost is paid only for a whole picture: a growing one bypasses the cache
+// entirely (see bitmapForImage), so no frame hashes 2.8 MB while it streams.
 func imageKey(n lens.Image) string {
 	h := fnv.New64a()
 	_, _ = h.Write(n.Data)
 	return n.Path + ":" + strconv.FormatUint(h.Sum64(), 16)
 }
 
-func bitmapForImage(n lens.Image) (*ui.Bitmap, bool) {
-	key := imageKey(n)
+// imageWaitingText says how much of a still-arriving picture has come, for the
+// formats that cannot be drawn before the file is whole.
+func imageWaitingText(n lens.Image) string {
+	if n.Total > 0 {
+		pct := int(int64(len(n.Data)) * 100 / n.Total)
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 100 {
+			pct = 100
+		}
+		return "Image (" + strconv.Itoa(pct) + "%)"
+	}
+	return "Image (loading)"
+}
+
+// placeholderBitmap is the stand-in drawn for a picture that cannot be shown
+// yet: a checkerboard at the picture's own size, so the block keeps the shape
+// the real picture will fill and the progress text has somewhere to sit. A
+// picture whose size is not known gets no placeholder, since a made-up shape
+// would jump when the real one arrived.
+func placeholderBitmap(n lens.Image) (*ui.Bitmap, bool) {
+	w, h := n.PlaceholderSize[0], n.PlaceholderSize[1]
+	if w <= 0 || h <= 0 {
+		return nil, false
+	}
+	cacheKey := "ph:" + strconv.Itoa(w) + "x" + strconv.Itoa(h)
 	imgCacheMu.Lock()
-	if b, ok := imgCache[key]; ok {
+	if b, ok := imgCache[cacheKey]; ok {
 		imgCacheMu.Unlock()
 		return b, true
 	}
 	imgCacheMu.Unlock()
-	b, err := ui.DecodeBitmap(n.Data)
-	if err != nil {
-		return nil, false
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	const cell = 16
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			light := ((x/cell)+(y/cell))%2 == 0
+			c := uint8(0x2A)
+			if light {
+				c = uint8(0x33)
+			}
+			img.SetRGBA(x, y, color.RGBA{R: c, G: c, B: c, A: 0xFF})
+		}
 	}
+	b := ui.NewBitmap(img)
 	imgCacheMu.Lock()
 	if len(imgCache) > 64 {
 		imgCache = map[string]*ui.Bitmap{}
 	}
-	imgCache[key] = b
+	imgCache[cacheKey] = b
 	imgCacheMu.Unlock()
 	return b, true
+}
+
+// bitmapForImage decodes a picture for a block. A block whose bytes are still
+// arriving decodes only what has come, so the picture fills in from the top as
+// the command prints, instead of showing "cannot decode" until the end and
+// then appearing whole. growKey isolates progressive decode state per block run
+// so re-running `cat` on the same path starts fresh.
+func bitmapForImage(n lens.Image, growKey string) (*ui.Bitmap, bool) {
+	// A picture whose bytes are still arriving is drawn from what there is: the
+	// progressive decoder needs no trailer, while the standard one refuses
+	// anything short of the end of the file. Such a picture also bypasses the
+	// cache, both ways — hashing it every frame cost more than the transfer,
+	// and a cached frame of it was once served to the finished block, which
+	// then drew the top third of a picture that had arrived in full.
+	partial := n.Growing || (n.Complete > 0 && len(n.Data) < n.Complete)
+	key := ""
+	if partial {
+		if bmp, ok := growingBitmapFor(n, growKey); ok {
+			return bmp, true
+		}
+	} else {
+		key = imageKey(n)
+		imgCacheMu.Lock()
+		if b, ok := imgCache[key]; ok {
+			imgCacheMu.Unlock()
+			deleteGrowing(growKey)
+			return b, true
+		}
+		imgCacheMu.Unlock()
+	}
+	b, err := ui.DecodeBitmap(n.Data)
+	if err != nil {
+		// Fall back to the rows that can be decoded, so a truncated file shows
+		// what it has instead of an error.
+		if bmp, ok := growingBitmapFor(n, growKey); ok {
+			return bmp, true
+		}
+		return nil, false
+	}
+	if !partial {
+		deleteGrowing(growKey)
+		imgCacheMu.Lock()
+		if len(imgCache) > 64 {
+			imgCache = map[string]*ui.Bitmap{}
+		}
+		imgCache[key] = b
+		imgCacheMu.Unlock()
+	}
+	return b, true
+}
+
+// growingBitmapFor draws the rows a still-arriving picture's prefix holds. The
+// decode state and the bitmap both persist by growKey (block scope + path), so
+// each frame pays only for the bytes that are new and the GPU keeps one texture
+// for the whole transfer while independent runs of the same file never collide.
+func growingBitmapFor(n lens.Image, growKey string) (*ui.Bitmap, bool) {
+	if growKey == "" {
+		growKey = n.Path
+	}
+	g := growingState(growKey)
+	if g == nil {
+		return nil, false
+	}
+	growingMu.Lock()
+	keep := growingCache[growKey]
+	growingMu.Unlock()
+	bmp, ok := g.Bitmap(n.Data, keep)
+	if !ok {
+		return nil, false
+	}
+	updateGrowingBitmap(growKey, bmp)
+	return bmp, true
+}
+
+// growingState is the decode state for growKey, made on first use.
+func growingState(growKey string) *Growing {
+	growingMu.Lock()
+	if g, ok := growingStates[growKey]; ok {
+		growingMu.Unlock()
+		return g
+	}
+	var evicted []*Growing
+	if len(growingStates) > 8 {
+		for _, old := range growingStates {
+			evicted = append(evicted, old)
+		}
+		growingStates = map[string]*Growing{}
+		growingCache = map[string]*ui.Bitmap{}
+	}
+	g := NewGrowing()
+	growingStates[growKey] = g
+	growingMu.Unlock()
+	for _, old := range evicted {
+		old.Close()
+	}
+	return g
 }
 
 func imageOpenGet(key string) bool {
@@ -3433,12 +3598,33 @@ func imageOpenSet(key string, open bool) {
 // fit).
 func renderImage(c *ui.Context, n lens.Image, rs *renderState) {
 	s := styleFor(c)
-	bmp, ok := bitmapForImage(n)
+	key := rs.key("img", n.Path+"\x00"+n.Alt)
+	bmp, ok := bitmapForImage(n, key)
 	if !ok {
+		if n.Growing {
+			// The bytes are a prefix and this format cannot be drawn from one:
+			// GIF's LZW stream only yields rows as its table grows. Show a
+			// stand-in of the picture's own size with the progress, so the block
+			// holds its place instead of jumping when the picture lands.
+			if bmp, has := placeholderBitmap(n); has {
+				bw, bh := bmp.Size()
+				fw, fh := imageFit(float32(bw), float32(bh), 480, 360)
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Image(c, bmp).Width(fw).Height(fh)
+					ui.Text(c, imageWaitingText(n)).FontSize(s.SmallSize).TextColor(s.T3)
+				})
+				return
+			}
+			ui.Text(c, imageWaitingText(n)).FontSize(s.SmallSize).TextColor(s.T3)
+			return
+		}
 		ui.Text(c, "Image (cannot decode)").FontSize(s.SmallSize).TextColor(s.T3)
 		return
 	}
-	key := stateKey(rs.scope, "img:"+imageKey(n), 0)
+	// A picture still arriving keeps one bitmap and one texture: each new prefix
+	// updates the same pixels, so a slow link does not allocate a texture per
+	// chunk. The size is the full picture's from the first frame, because the
+	// PNG's header is the first thing that arrives.
 	bw, bh := bmp.Size()
 	fw, fh := imageFit(float32(bw), float32(bh), 480, 360)
 	ui.Column(c).Gap(4).Children(func() {
@@ -3478,7 +3664,6 @@ func renderImage(c *ui.Context, n lens.Image, rs *renderState) {
 	})
 }
 
-// emitAction sends Terminal”s action event: {ev = "action", id, act, item}.
 // imageFit scales an image to fit inside maxW x maxH, keeping its aspect.
 func imageFit(w, h, maxW, maxH float32) (float32, float32) {
 	if w <= 0 || h <= 0 {

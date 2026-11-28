@@ -39,6 +39,28 @@ type Lens interface {
 	Event(state any, ev Event) error
 }
 
+// ByteSink is an optional interface a lens can implement to capture the raw
+// byte stream of its command instead of line-shaped text. It is the right
+// shape for commands whose output is binary — `cat image.png` is the canonical
+// case: the bytes reaching the terminal already are the picture, so the lens
+// should not have to re-read the file from disk, and textifying them only
+// floods the screen with garbage rows.
+//
+// When a lens implements ByteSink and CaptureBytes reports true after Open,
+// the engine and tap skip the rune/screen pipeline entirely for the rest of
+// the command: Line is never called again, every output byte reaches Bytes in
+// order, and Finish/View see the accumulation in whatever state the lens kept.
+type ByteSink interface {
+	Lens
+	// CaptureBytes reports whether this command's byte stream should be
+	// captured raw. It is consulted once, right after Open, so the lens can
+	// decide from the command (path extension, subcommand, flags).
+	CaptureBytes(state any) bool
+	// Bytes receives the raw output bytes in order. The chunks are not
+	// aligned to anything — they are the pieces the PTY delivered.
+	Bytes(state any, b []byte) error
+}
+
 // Definition registers a lens: its id, the globs over the simple command
 // line that claim a command, how to make it, and how early it is asked.
 type Definition struct {
@@ -148,6 +170,21 @@ var wrappers = map[string]bool{
 // or a redirection means the output belongs to more than this one program, so
 // the block stays raw.
 func IsSimple(line string) bool {
+	// A sequence is the first thing to settle, because the output that follows
+	// the start mark is the last command's: `cd Pictures && cat a.png` runs two
+	// commands and the picture comes from the second. Refusing the whole line
+	// meant the most common way to run a command that needs another directory
+	// first was never claimed, and the picture's bytes printed as text.
+	last := lastCommandSegment(line)
+	// A pipeline or a redirection changes the output the block will show, so a
+	// lens must not claim it: `cat a.png | head` prints head's output, and
+	// `cat a.png > copy` prints nothing.
+	return !hasPipeOrRedirect(last)
+}
+
+// hasPipeOrRedirect reports whether a single command redirects its output or
+// pipes it somewhere else. `||` is a sequence separator, not a pipe.
+func hasPipeOrRedirect(line string) bool {
 	var quote byte
 	for i := 0; i < len(line); i++ {
 		c := line[i]
@@ -160,11 +197,17 @@ func IsSimple(line string) bool {
 			}
 		case c == '\'' || c == '"':
 			quote = c
-		case c == '|' || c == ';' || c == '&' || c == '<' || c == '>':
-			return false
+		case c == '|':
+			if i+1 < len(line) && line[i+1] == '|' {
+				i++ // `||` runs the next command instead; not a pipe
+				continue
+			}
+			return true
+		case c == '<' || c == '>':
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // Normalize turns a reported command line into the program and its
@@ -175,14 +218,20 @@ func Normalize(line, typed, cwd string) model.Cmd {
 	if line == "" {
 		line = strings.TrimSpace(typed)
 	}
+	// A line can hold several commands: `cd Pictures && cat a.png` runs two,
+	// and only the last one prints the output the block will show. Taking the
+	// line whole made its program `cd`, so the file lens never matched and the
+	// picture's bytes were treated as text (they showed as "Binary file").
+	// The last segment is the one whose output follows the start mark.
+	line = lastCommandSegment(line)
 	if e, ok := aliases[strings.ToLower(strings.TrimSpace(line))]; ok {
 		line = e
-	} else if f := strings.Fields(line); len(f) > 0 {
+	} else if f := splitCommandLine(line); len(f) > 0 {
 		if e, ok := aliases[strings.ToLower(f[0])]; ok {
 			line = e + " " + strings.Join(f[1:], " ")
 		}
 	}
-	fields := strings.Fields(line)
+	fields := splitCommandLine(line)
 	for len(fields) > 0 {
 		if isAssignment(fields[0]) || fields[0] == "" {
 			fields = fields[1:]
@@ -215,6 +264,126 @@ func Normalize(line, typed, cwd string) model.Cmd {
 	cmd.Program = strings.TrimSuffix(filepath.Base(fields[0]), ".exe")
 	cmd.Args = append([]string(nil), fields[1:]...)
 	return cmd
+}
+
+// lastCommandSegment returns the last command in a line that runs several:
+// `a && b`, `a; b`, `a || b`, `a & b`. The output that follows a start mark is
+// the last command's, so that is the one a lens has to identify.
+//
+// A pipeline is left whole: `cat a.png | head` prints head's output, but the
+// file lens still needs the cat that produced the bytes, and the existing
+// handling of pipes keeps the first program. Redirections and subshells are
+// left as text, which is all a lens reads.
+func lastCommandSegment(line string) string {
+	depth := 0
+	var quote byte
+	last := 0
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && quote == '"' && i+1 < len(line) {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '\\' && i+1 < len(line):
+			i++
+		case c == '(' || c == '{':
+			depth++
+		case c == ')' || c == '}':
+			if depth > 0 {
+				depth--
+			}
+		case depth == 0 && c == ';':
+			last = i + 1
+		case depth == 0 && c == '&':
+			// `&&` and `&` both start a new command; `||` is handled on the
+			// second bar of a pair, and a lone `&` backgrounds what came before.
+			if i+1 < len(line) && line[i+1] == '&' {
+				i++
+			}
+			last = i + 1
+		case depth == 0 && c == '|':
+			// `|` pipes into the next command; `||` starts a new one.
+			if i+1 < len(line) && line[i+1] == '|' {
+				i++
+				last = i + 1
+			}
+		}
+	}
+	seg := strings.TrimSpace(line[last:])
+	if seg == "" {
+		return strings.TrimSpace(line)
+	}
+	return seg
+}
+
+// reads it: quotes group a word that contains spaces, and a backslash escapes
+// the next character. strings.Fields is not enough, because `cat "my logo.png"`
+// then arrives as `"my` and `logo.png"`, and the file lens could not recognize
+// a picture whose name has a space in it.
+//
+// It is not a shell parser: expansions, substitutions and redirections are
+// left as text, which is all a lens needs to find the program and its file.
+// splitCommandLine splits a shell command line into its words the way the shell
+// reads it: quotes group a word that contains spaces, and a backslash escapes
+// the next character.
+func splitCommandLine(line string) []string {
+	var out []string
+	var cur strings.Builder
+	inWord := false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch c {
+		case ' ', '\t':
+			if inWord {
+				out = append(out, cur.String())
+				cur.Reset()
+				inWord = false
+			}
+		case '\'', '"':
+			inWord = true
+			quote := c
+			i++
+			for ; i < len(line); i++ {
+				ch := line[i]
+				if ch == '\\' && quote == '"' && i+1 < len(line) {
+					// Inside double quotes only these escapes are special; any
+					// other backslash is the shell's literal backslash.
+					switch line[i+1] {
+					case '"', '\\', '$', '`':
+						cur.WriteByte(line[i+1])
+						i++
+						continue
+					}
+					cur.WriteByte(ch)
+					continue
+				}
+				if ch == quote {
+					break
+				}
+				cur.WriteByte(ch)
+			}
+		case '\\':
+			inWord = true
+			if i+1 < len(line) {
+				i++
+				cur.WriteByte(line[i])
+			}
+		default:
+			inWord = true
+			cur.WriteByte(c)
+		}
+	}
+	if inWord {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // takesArgument reports whether a wrapper's flag takes the next token with it,

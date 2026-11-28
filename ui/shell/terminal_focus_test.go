@@ -254,7 +254,7 @@ func TestTerminalInputSurvivesDelayedOutputAndTabSwitches(t *testing.T) {
 		t.Fatalf("first Terminal did not accept initial input: %q", factory.at(0).input())
 	}
 
-	// Simulate the shell's prompt/output and Tern's Lens protocol arriving
+	// Simulate the shell's prompt/output and the Lens protocol arriving
 	// after the first frame, while the user leaves the Tab untouched.
 	factory.at(0).emit("\x1b]1337;NetcattyExec;powershell;Qzpcd29yaw;ZWNobyBvbmU\x07")
 	factory.at(0).emit("\x1b]133;C\x07one output\r\n\x1b]133;D;0\x07")

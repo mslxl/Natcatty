@@ -242,6 +242,24 @@ type Image struct {
 	Data []byte
 	Path string
 	Alt  string
+	// Growing says Data is still arriving: the command that prints the picture
+	// has not finished, so the bytes are a prefix of the file. The renderer then
+	// draws as much of the picture as the prefix allows and keeps growing it,
+	// instead of waiting for the end (or calling a partial file broken).
+	Growing bool
+	// Total is how many bytes the picture is expected to be, when the lens knows
+	// (a file's size from stat). Zero when unknown. It drives the progress
+	// reading shown while the picture arrives.
+	Total int64
+	// Complete is how many bytes of Data are the picture proper, when trailing
+	// bytes were cut (see viewfile's trimImageBytes). It lets the growing view
+	// tell "the file's end has arrived" from "more is still coming".
+	Complete int
+	// PlaceholderSize is the picture's pixel size, when the lens could read it
+	// from a prefix the decoder rejected (GIF's header names it). The block then
+	// holds that shape with a stand-in and a progress reading, instead of
+	// collapsing to a line of text and jumping when the picture lands.
+	PlaceholderSize [2]int
 }
 
 // CardProps are the head extras Terminal's flow.ui.card accepts besides its head:

@@ -268,6 +268,10 @@ type Snapshot struct {
 	// that has not caught up reads as a shortening of the real line, which a
 	// consumer keying off input changes must not mistake for the user's edit.
 	InputScreenSourced bool
+	// PromptNoRedraw reports that the shell's prompt-start mark promised not to
+	// redraw the prompt when the window is resized (OSC 133;A;redraw=0), so the
+	// terminal reflows it instead. See tapState.PromptNoRedraw.
+	PromptNoRedraw bool
 	// Busy reports recent output, a running command, or an active transfer.
 	Busy bool
 	// LastActivity is when terminal output last arrived.
@@ -750,11 +754,14 @@ type Session struct {
 	rawMu     sync.Mutex
 	rawFeed   *rawOutputFeed
 
-	// outputMu guards observers that receive the decoded terminal stream in
-	// the same order as the live terminal. UI features such as command lenses
-	// subscribe here without consuming the Session's one TerminalConn reader.
+	// outputDeliverMu serializes publishOutput against replay+register in
+	// SubscribeOutputReplay / SubscribeOutputFilterReplay while keeping
+	// outputObserverMu free during callbacks so unsubscribe never deadlocks.
+	outputDeliverMu sync.Mutex
+	// outputObserverMu guards observers, filters, and outputReplay.
 	outputObserverMu sync.Mutex
 	outputObservers  map[uint64]func([]byte)
+	outputFilters    map[uint64]func([]byte) []byte
 	nextOutputID     uint64
 	// outputReplay keeps the bounded decoded stream needed to reconstruct a
 	// command-lens surface created after a Session has already produced output.
@@ -1880,6 +1887,7 @@ func (s *Session) Snapshot() Snapshot {
 	snapshot.Input = state.Input
 	snapshot.InputCursor = state.InputCursor
 	snapshot.InputScreenSourced = state.InputScreenSourced
+	snapshot.PromptNoRedraw = state.PromptNoRedraw
 	snapshot.Busy = state.Busy
 	snapshot.LastActivity = state.LastActivity
 	snapshot.Transfer = state.Transfer
@@ -2482,49 +2490,52 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			now := time.Now()
 			decoded := s.decodeOutput(buffer[:n])
 			// Observers such as the command-lens surface see the complete
-			// decoded stream while the Session still owns ordering. They do
-			// not consume the bytes; TerminalConn continues to receive them
-			// through the existing tap path below.
-			s.publishOutput(decoded)
+			// decoded stream while the Session still owns ordering. Registered
+			// output filters (such as a binary-capturing image lens) strip
+			// captured binary payload bytes before the stream reaches the
+			// terminal tap, highlighter, replay buffer, and visible terminal.
+			forTerminal := s.publishOutput(decoded)
 			// A running raw command sees the transport output before the tap:
 			// its completion detection must not depend on prompt tracking or
 			// history effects.
 			s.publishRawOutput(decoded)
-			s.feedAutoLogin(generation, string(decoded))
-			s.observeStartupOutput(generation, decoded)
-			output, effects := s.tap.observe(decoded, now)
-			if len(output) > 0 {
-				s.writeLog(logOutput(output))
-				s.highlightChunk(output)
-			}
-			if effects.Changed {
-				state := s.publishTap(now)
-				if len(output) > 0 && !state.Command.Running {
-					// A prompt or shell-initiated output can follow a cd.
-					// Cache until the next such burst; a running command's
-					// output rarely moves the shell's own directory.
+			if len(forTerminal) > 0 {
+				s.feedAutoLogin(generation, string(forTerminal))
+				s.observeStartupOutput(generation, forTerminal)
+				output, effects := s.tap.observe(forTerminal, now)
+				if len(output) > 0 {
+					s.writeLog(logOutput(output))
+					s.highlightChunk(output)
+				}
+				if effects.Changed {
+					state := s.publishTap(now)
+					if len(output) > 0 && !state.Command.Running {
+						// A prompt or shell-initiated output can follow a cd.
+						// Cache until the next such burst; a running command's
+						// output rarely moves the shell's own directory.
+						s.invalidateCWDProbe()
+					}
+					s.scheduleActivityClear()
+				}
+				// observe returned after releasing the tap lock, so completions are
+				// published outside it. Each command is finalized once.
+				for _, completion := range effects.Completions {
+					s.publishCommandCompletion(completion)
+					// Prompt return is the canonical cwd change point.
 					s.invalidateCWDProbe()
 				}
-				s.scheduleActivityClear()
-			}
-			// observe returned after releasing the tap lock, so completions are
-			// published outside it. Each command is finalized once.
-			for _, completion := range effects.Completions {
-				s.publishCommandCompletion(completion)
-				// Prompt return is the canonical cwd change point.
-				s.invalidateCWDProbe()
-			}
-			if effects.PromptRecheck {
-				s.schedulePromptRecheck()
-			}
-			if effects.Bell && s.onBell != nil {
-				s.onBell(s.id)
-			}
-			if effects.Notification != nil && s.onNotification != nil {
-				s.onNotification(s.id, *effects.Notification)
-			}
-			if effects.Transfer != nil && s.onTransfer != nil {
-				s.onTransfer(s.id, *effects.Transfer)
+				if effects.PromptRecheck {
+					s.schedulePromptRecheck()
+				}
+				if effects.Bell && s.onBell != nil {
+					s.onBell(s.id)
+				}
+				if effects.Notification != nil && s.onNotification != nil {
+					s.onNotification(s.id, *effects.Notification)
+				}
+				if effects.Transfer != nil && s.onTransfer != nil {
+					s.onTransfer(s.id, *effects.Transfer)
+				}
 			}
 			// The bytes are now in the backlog (or filtered out); a pending
 			// remote resize may proceed without overtaking them.

@@ -295,7 +295,19 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 			col = col.PaddingX(flowPadY)
 		}
 		col.Children(func() {
-			renderHistory := tail.PromptRowKnown
+			// Blocks are drawn when the live area no longer repeats them. That
+			// is `PromptRowKnown`, the boundary the crop needs, and it is what
+			// this has always been. A width change clears it (the recorded row
+			// names a different line after the reflow) without the flow being
+			// gone: the shell redraws its prompt and reports a fresh boundary
+			// at once, and every block came back then. Gating on the boundary
+			// alone made the whole flow blink out on every resize until that
+			// happened.
+			//
+			// A running command that already shows its lens view is the other
+			// case: tailFrom crops it to the cursor row without a boundary, so
+			// its block can be drawn while the boundary is missing too.
+			renderHistory := tail.PromptRowKnown || (tail.Running != "" && tail.RunningHasView)
 			// The captured prompt rows were drawn on the terminal's background, so
 			// they are given it back here: without it terminal-coloured text can sit
 			// on a page background of the opposite lightness, the way a program's
@@ -307,7 +319,14 @@ func Pane(c *ui.Context, store *model.Store, engine *lens.Engine, term *terminal
 				// twice. Terminal swaps the cell in when the command ends, which is what
 				// ClearOnExit does here (the screen is emptied as the flow gains the
 				// cell).
-				if !blocks[i].Exited || !renderHistory {
+				//
+				// The exception is a running command whose lens already built a view:
+				// Terminal draws that block while the command runs (its bar carries
+				// the running colour, `data-state='running'`), and the view is the one
+				// place its output shows. Tail.RunningHasView crops the same command's
+				// rows out of the live area, so the block here is not a second copy.
+				runningWithView := !blocks[i].Exited && blocks[i].Native != nil
+				if (!blocks[i].Exited && !runningWithView) || !renderHistory {
 					continue
 				}
 				// The live grid sits `livePad` inside its rounded background; a
@@ -661,7 +680,7 @@ func Live(c *ui.Context, frame Frame, showCursor bool, term *terminal.Terminal, 
 		// whole replay.
 		from = 0
 		bell.Col, bell.Row = -1, -1
-	} else if tail.Running != "" && tail.ScreenCleared && frame.sc != nil {
+	} else if tail.Running != "" && !tail.RunningHasView && tail.ScreenCleared && frame.sc != nil {
 		// A full-screen program that stays on the main screen (procps top)
 		// clears and repaints it in place. The shell's prompt row then names a
 		// line the program has overwritten, and cropping there left only the
@@ -1225,6 +1244,13 @@ type Tail struct {
 	// program overwrote it), so the live area must start at the screen's own
 	// first row or it shows only the rows below the stale prompt row.
 	ScreenCleared bool
+	// RunningHasView says the running command's block already shows the lens
+	// view in the flow. The command's own output rows are then cropped away
+	// like a finished command's: the lens block is the one place that output
+	// shows, so the same replies must not stream in the live grid underneath
+	// it. A running command with no view yet keeps its rows, which is what a
+	// lens that has not built anything (or a command no lens claimed) shows.
+	RunningHasView bool
 }
 
 // tailFrom is the first screen row the live area shows: the prompt line when idle,
@@ -1243,6 +1269,22 @@ func tailFrom(lines [][]ui.Span, cursorRow int, tail Tail) int {
 	}
 	if cursorRow < 0 {
 		return 0
+	}
+	// A running command whose block already shows its lens view owns every row
+	// of its output: the flow above the live area draws them, and the prompt
+	// band above that block carries the shell's prompt. Drawing the same bytes
+	// again below would show each reply twice, and for a binary or very large
+	// output it would flood the screen with the garbage the view replaced. The
+	// live area keeps only the cursor's row, where typing lands.
+	//
+	// This comes before the boundary check: a width change clears the recorded
+	// prompt row (the reflow renames every row), and falling through to the
+	// whole-screen branch there put the running command's own replies back on
+	// screen underneath the view that had replaced them, until the shell drew
+	// a fresh prompt. No boundary is needed to crop here: the block is the
+	// one place the output shows, so every row of it goes.
+	if tail.Running != "" && tail.RunningHasView {
+		return cursorRow
 	}
 	// Without an exact shell-integration boundary, the terminal is rendered as
 	// one raw screen. Cropping it would require guessing from prompt text and

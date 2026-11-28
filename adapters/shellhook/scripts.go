@@ -64,10 +64,17 @@ const zshHookScript = `if [[ -n ${NETCATTY_HOOK:-} ]]; then
   fi
   return 0
 fi
-if [[ -n ${ATUIN_SESSION:-} || -n ${STARSHIP_SHELL:-} || -n ${STARSHIP_SESSION_KEY:-} || -n ${ITERM_SHELL_INTEGRATION_INSTALLED:-} ]]; then
+if [[ -n ${ITERM_SHELL_INTEGRATION_INSTALLED:-} ]]; then
+  # The iTerm2 integration owns the same marks and cannot share them: two
+  # emitters draw two prompt bars, and the block boundaries no longer line up.
   printf "\033]1337;NetcattyHookSkip;zsh\007"
   return 0
 fi
+# Atuin and Starship run here too (ATUIN_SESSION, STARSHIP_SHELL,
+# STARSHIP_SESSION_KEY), and they draw the prompt, but neither reports the
+# command line on the start mark: a terminal reading only the mark never learns
+# what ran, which is why a picture showed as "Binary file" with no toolbar.
+# The hook installs beside them and adds that field.
 if (( ${+functions[atuin_preexec]} || ${+functions[iterm2_preexec]} || ${+functions[iterm2_prompt_mark]} )); then
   printf "\033]1337;NetcattyHookSkip;zsh\007"
   return 0
@@ -95,35 +102,65 @@ __netcatty_b64() {
 }
 
 __netcatty_preexec() {
-  local __nc_line="$1" __nc_command __nc_cwd
+  local __nc_line="$1" __nc_expanded="$3" __nc_command __nc_cwd
   if [[ -z $__nc_line ]]; then
     return 0
   fi
+  # The private sequence first: it carries the working directory, which the
+  # standard mark does not, and a client that predates the standard form reads
+  # the command from it.
   __nc_command=$(__netcatty_b64 "$__nc_line")
   __nc_cwd=$(__netcatty_b64 "$PWD")
   if [[ -n $__nc_command && -n $__nc_cwd ]]; then
-    printf "\033]1337;NetcattyExec;zsh;%s;%s\007" "$__nc_cwd" "$__nc_command"
+    builtin printf "\033]1337;NetcattyExec;zsh;%s;%s\007" "$__nc_cwd" "$__nc_command"
   fi
-  printf "\033]133;C\007"
+  # The standard mark carries the command line itself (the form the kitty
+  # integration uses, so any terminal reading it agrees): the line
+  # shell-quoted, and the line with its alias expanded when an alias matched.
+  # Writing it to the tty keeps it out of the command output; a system
+  # without /dev/tty falls back to stdout.
+  if [[ -n $__nc_expanded && $__nc_expanded != "$__nc_line" && ${+aliases[${${(Az)__nc_line}[1]}]} ]]; then
+    { builtin printf "\033]133;C;cmdline=%q;cmdline_expanded=%q\007" "$__nc_line" "$__nc_expanded" > /dev/tty } 2>/dev/null ||
+      builtin printf "\033]133;C;cmdline=%q;cmdline_expanded=%q\007" "$__nc_line" "$__nc_expanded"
+  else
+    { builtin printf "\033]133;C;cmdline=%q\007" "$__nc_line" > /dev/tty } 2>/dev/null ||
+      builtin printf "\033]133;C;cmdline=%q\007" "$__nc_line"
+  fi
 }
 
 __netcatty_precmd() {
   local __nc_status=$?
-  printf "\033]133;D;%s\007" "$__nc_status"
-  printf "\033]1337;NetcattyHook;zsh\007"
-  printf "\033]133;A\007"
-  printf "\033]7;file://%s%s\007" "${HOST:-}" "$PWD"
-  printf "\033]133;B\007"
+  builtin printf "\033]133;D;%s\007" "$__nc_status"
+  builtin printf "\033]1337;NetcattyHook;zsh\007"
+  # The prompt-start and prompt-done marks are not written here: they live in
+  # PS1 (see __netcatty_marks_in_prompt), so a theme that replaces the prompt
+  # still carries them. Writing them here as well sent every prompt mark twice.
+  builtin printf "\033]7;file://%s%s\007" "${HOST:-}" "$PWD"
+}
+
+# Keeps the marks in the prompt as well: zsh reads its startup files after the
+# hook is installed, and a theme may replace PS1 wholesale afterwards. Putting
+# the marks into PS1 itself (and again before every prompt) keeps the
+# marks in a prompt a theme replaced.
+__netcatty_marks_in_prompt() {
+  local __nc_a __nc_b
+  builtin printf -v __nc_a "\033]133;A;redraw=0\007"
+  builtin printf -v __nc_b "\033]133;B\007"
+  [[ $PS1 == *"$__nc_a"* ]] && return 0
+  PS1="${__nc_a}%{"$PS1"%}${__nc_b}"
+  PS2="${__nc_a}%{"$PS2"%}"
 }
 
 if (( ! ${+functions[add-zsh-hook]} )); then
   autoload -Uz add-zsh-hook 2>/dev/null
 fi
 if (( ${+functions[add-zsh-hook]} )); then
+  add-zsh-hook precmd __netcatty_marks_in_prompt
   add-zsh-hook precmd __netcatty_precmd
   add-zsh-hook preexec __netcatty_preexec
 else
   typeset -ga precmd_functions preexec_functions
+  precmd_functions+=(__netcatty_marks_in_prompt)
   precmd_functions+=(__netcatty_precmd)
   preexec_functions+=(__netcatty_preexec)
 fi
@@ -196,7 +233,10 @@ const bashHookScript = `if [ -n "${NETCATTY_HOOK:-}" ] && [ "${NETCATTY_CHILD_HO
   fi
   return 0
 fi
-if [ -n "${ATUIN_SESSION:-}" ] || [ -n "${STARSHIP_SHELL:-}" ] || [ -n "${STARSHIP_SESSION_KEY:-}" ] || [ -n "${ITERM_SHELL_INTEGRATION_INSTALLED:-}" ]; then
+# Only iTerm2 integration is a reason to stand down: it owns the same marks.
+# Atuin and Starship (ATUIN_SESSION, STARSHIP_SHELL, STARSHIP_SESSION_KEY) draw
+# the prompt but report no command line, so the hook installs beside them.
+if [ -n "${ITERM_SHELL_INTEGRATION_INSTALLED:-}" ]; then
   printf "\033]1337;NetcattyHookSkip;bash\007"
   return 0
 fi
@@ -283,12 +323,16 @@ __netcatty_preexec() {
     return 0
   fi
   local __nc_command __nc_cwd
+  # The private sequence first: it carries the working directory, which the
+  # standard mark does not.
   __nc_command=$(__netcatty_b64 "$__nc_line")
   __nc_cwd=$(__netcatty_b64 "$PWD")
   if [ -n "$__nc_command" ] && [ -n "$__nc_cwd" ]; then
     printf "\033]1337;NetcattyExec;bash;%s;%s\007" "$__nc_cwd" "$__nc_command"
   fi
-  printf "\033]133;C\007"
+  # The standard mark carries the command line itself (the form the kitty
+  # integration uses), shell-quoted so a receiver can tell the words apart.
+  printf "\033]133;C;cmdline=%q\007" "$__nc_line"
 }
 
 __netcatty_save_status() {
@@ -302,7 +346,9 @@ __netcatty_save_status() {
 __netcatty_precmd() {
   printf "\033]133;D;%s\007" "${__netcatty_status:-0}"
   printf "\033]1337;NetcattyHook;bash\007"
-  printf "\033]133;A\007"
+  # redraw=0 promises the shell will not draw the prompt again when the window
+  # is resized, so the terminal reflows it instead of both drawing it.
+  printf "\033]133;A;redraw=0\007"
   printf "\033]7;file://%s%s\007" "${HOSTNAME:-}" "$PWD"
   printf "\033]133;B\007"
   __netcatty_read_history
@@ -458,7 +504,7 @@ export NETCATTY_HOOK=1
 func posixStartupScript() string {
 	return `__netcatty_prompt() {
   printf '\033]133;D;%s\007' "$?"
-  printf '\033]133;A\007'
+  printf '\033]133;A;redraw=0\007'
   printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"
   printf '\033]133;B\007'
 }
@@ -540,7 +586,10 @@ if set -q NETCATTY_HOOK
     return
 end
 
-if set -q ATUIN_SESSION; or set -q STARSHIP_SHELL; or set -q STARSHIP_SESSION_KEY; or set -q ITERM_SHELL_INTEGRATION_INSTALLED
+# Only iTerm2 integration is a reason to stand down: it owns the same marks.
+# Atuin and Starship (ATUIN_SESSION, STARSHIP_SHELL, STARSHIP_SESSION_KEY) draw
+# the prompt but report no command line, so the hook installs beside them.
+if set -q ITERM_SHELL_INTEGRATION_INSTALLED
     printf "\e]1337;NetcattyHookSkip;fish\a"
     return
 end
@@ -580,7 +629,9 @@ function __netcatty_preexec --on-event fish_preexec
     if test -n "$__nc_command"; and test -n "$__nc_cwd"
         printf "\e]1337;NetcattyExec;fish;%s;%s\a" "$__nc_cwd" "$__nc_command"
     end
-    printf "\e]133;C\a"
+    # The standard mark carries the command line itself, URL-encoded: fish has
+    # a builtin encoder, and it is the field fish and PowerShell share.
+    printf "\e]133;C;cmdline_url=%s\a" (string escape --style=url -- "$__nc_line")
 end
 
 function __netcatty_postexec --on-event fish_postexec
@@ -589,7 +640,9 @@ end
 
 function __netcatty_prompt --on-event fish_prompt
     printf "\e]1337;NetcattyHook;fish\a"
-    printf "\e]133;A\a"
+    # redraw=0 promises fish will not draw the prompt again when the window is
+    # resized, so the terminal reflows it instead of both drawing it.
+    printf "\e]133;A;redraw=0\a"
     printf "\e]7;file://%s%s\a" "$hostname" "$PWD"
     printf "\e]133;B\a"
 end
@@ -614,13 +667,10 @@ def __netcatty_skip [] {
   print -n $"\u{1b}]1337;NetcattyHookSkip;nu\u{7}"
 }
 
+# Only iTerm2 integration is a reason to stand down: it owns the same marks.
+# Atuin and Starship (ATUIN_SESSION, STARSHIP_SHELL, STARSHIP_SESSION_KEY) draw
+# the prompt but report no command line, so the hook installs beside them.
 if ($env.NETCATTY_HOOK? | default "") != "" {
-  __netcatty_skip
-} else if ($env.ATUIN_SESSION? | default "") != "" {
-  __netcatty_skip
-} else if ($env.STARSHIP_SHELL? | default "") != "" {
-  __netcatty_skip
-} else if ($env.STARSHIP_SESSION_KEY? | default "") != "" {
   __netcatty_skip
 } else if ($env.ITERM_SHELL_INTEGRATION_INSTALLED? | default "") != "" {
   __netcatty_skip
@@ -641,7 +691,9 @@ if ($env.NETCATTY_HOOK? | default "") != "" {
         let __netcatty_enc_cwd = (__netcatty_b64 $__netcatty_cwd)
         let __netcatty_enc_line = (__netcatty_b64 $__netcatty_line)
         print -n $"\u{1b}]1337;NetcattyExec;nu;($__netcatty_enc_cwd);($__netcatty_enc_line)\u{7}"
-        print -n $"\u{1b}]133;C\u{7}"
+        # The standard mark carries the command line itself, URL-encoded: nu
+        # has a builtin encoder, and it is the field fish and PowerShell share.
+        print -n $"\u{1b}]133;C;cmdline_url=($__netcatty_line | url encode --all)\u{7}"
         $env.NETCATTY_NU_PENDING = 1
       }
     })
@@ -658,7 +710,7 @@ if ($env.NETCATTY_HOOK? | default "") != "" {
         $env.NETCATTY_NU_PENDING = 0
       }
       print -n $"\u{1b}]1337;NetcattyHook;nu\u{7}"
-      print -n $"\u{1b}]133;A\u{7}"
+      print -n $"\u{1b}]133;A;redraw=0\u{7}"
       let __netcatty_host = ($env.HOSTNAME? | default "")
       let __netcatty_cwd = ($env.PWD | into string)
       print -n $"\u{1b}]7;file://($__netcatty_host)($__netcatty_cwd)\u{7}"
@@ -681,6 +733,7 @@ const xonshHookText = `# Netcatty session hook for xonsh. It appends event handl
 import base64 as __netcatty_base64
 import os as __netcatty_os
 import sys as __netcatty_sys
+import urllib.parse as __netcatty_url
 
 def __netcatty_b64(value):
     return __netcatty_base64.urlsafe_b64encode(value.encode("utf-8", "replace")).decode("ascii").rstrip("=")
@@ -710,7 +763,9 @@ def __netcatty_install():
         except OSError:
             cwd = ""
         __netcatty_emit("\x1b]1337;NetcattyExec;xonsh;" + __netcatty_b64(cwd) + ";" + __netcatty_b64(line) + "\x07")
-        __netcatty_emit("\x1b]133;C\x07")
+        # The standard mark carries the command line itself, URL-encoded: it is
+        # the field fish and PowerShell send, and xonsh has an encoder built in.
+        __netcatty_emit("\x1b]133;C;cmdline_url=" + __netcatty_url.quote(line, safe="") + "\x07")
         state["pending"] = True
 
     @events.on_postcommand
@@ -722,7 +777,9 @@ def __netcatty_install():
             else:
                 __netcatty_emit("\x1b]133;D\x07")
         __netcatty_emit("\x1b]1337;NetcattyHook;xonsh\x07")
-        __netcatty_emit("\x1b]133;A\x07")
+        # redraw=0 promises xonsh will not draw the prompt again when the window
+        # is resized, so the terminal reflows it instead of both drawing it.
+        __netcatty_emit("\x1b]133;A;redraw=0\x07")
         try:
             cwd = __netcatty_os.getcwd()
         except OSError:
@@ -741,7 +798,10 @@ if not bool($XONSH_INTERACTIVE):
     pass
 elif __netcatty_os.environ.get("NETCATTY_HOOK"):
     __netcatty_skip()
-elif any(__netcatty_os.environ.get(name) for name in ("ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY", "ITERM_SHELL_INTEGRATION_INSTALLED")):
+elif __netcatty_os.environ.get("ITERM_SHELL_INTEGRATION_INSTALLED"):
+    # Only iTerm2 integration is a reason to stand down: it owns the same
+    # marks. Atuin and Starship (ATUIN_SESSION, STARSHIP_SHELL,
+    # STARSHIP_SESSION_KEY) draw the prompt but report no command line.
     __netcatty_skip()
 else:
     try:

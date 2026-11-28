@@ -9514,11 +9514,11 @@ func (msgs Messages) SessionAutocompleteLabel() string {
 	return Catalog.Format(msgs.locale, "sessionAutocompleteLabel", nil)
 }
 
-// SessionAutocompleteHint says "Tab to accept · Esc to dismiss"
+// SessionAutocompleteHint says "↑↓ to preview · Enter accepts · Esc reverts"
 // in the language the app shows.
 func SessionAutocompleteHint() string { return In(i18n.Locale()).SessionAutocompleteHint() }
 
-// SessionAutocompleteHint says "Tab to accept · Esc to dismiss"
+// SessionAutocompleteHint says "↑↓ to preview · Enter accepts · Esc reverts"
 // in the language of msgs.
 func (msgs Messages) SessionAutocompleteHint() string {
 	return Catalog.Format(msgs.locale, "sessionAutocompleteHint", nil)
@@ -11090,6 +11090,48 @@ func SessionPasteTruncated() string { return In(i18n.Locale()).SessionPasteTrunc
 // in the language of msgs.
 func (msgs Messages) SessionPasteTruncated() string {
 	return Catalog.Format(msgs.locale, "sessionPasteTruncated", nil)
+}
+
+// SessionRawConfirmTitle says "Show the raw bytes of {name}?"
+// in the language the app shows.
+func SessionRawConfirmTitle(name string) string {
+	return In(i18n.Locale()).SessionRawConfirmTitle(name)
+}
+
+// SessionRawConfirmTitle says "Show the raw bytes of {name}?"
+// in the language of msgs.
+func (msgs Messages) SessionRawConfirmTitle(name string) string {
+	return Catalog.Format(msgs.locale, "sessionRawConfirmTitle", map[string]any{"name": name})
+}
+
+// SessionRawConfirmBody says "The raw view is the image file itself: a wall of binary, not the picture. The preview is replaced until you switch ba…"
+// in the language the app shows.
+func SessionRawConfirmBody() string { return In(i18n.Locale()).SessionRawConfirmBody() }
+
+// SessionRawConfirmBody says "The raw view is the image file itself: a wall of binary, not the picture. The preview is replaced until you switch ba…"
+// in the language of msgs.
+func (msgs Messages) SessionRawConfirmBody() string {
+	return Catalog.Format(msgs.locale, "sessionRawConfirmBody", nil)
+}
+
+// SessionRawConfirmAccept says "Show Raw"
+// in the language the app shows.
+func SessionRawConfirmAccept() string { return In(i18n.Locale()).SessionRawConfirmAccept() }
+
+// SessionRawConfirmAccept says "Show Raw"
+// in the language of msgs.
+func (msgs Messages) SessionRawConfirmAccept() string {
+	return Catalog.Format(msgs.locale, "sessionRawConfirmAccept", nil)
+}
+
+// SessionRawConfirmCancel says "Keep Picture"
+// in the language the app shows.
+func SessionRawConfirmCancel() string { return In(i18n.Locale()).SessionRawConfirmCancel() }
+
+// SessionRawConfirmCancel says "Keep Picture"
+// in the language of msgs.
+func (msgs Messages) SessionRawConfirmCancel() string {
+	return Catalog.Format(msgs.locale, "sessionRawConfirmCancel", nil)
 }
 
 // SessionDropActive says "Drop files here to {action}."

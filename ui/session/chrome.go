@@ -37,6 +37,13 @@ type chromeModel struct {
 
 	// PendingPaste is a guarded paste waiting for the user's decision.
 	PendingPaste *PendingPaste
+	// RawConfirm names the picture block whose switch to the raw view is
+	// waiting for the user's decision; empty when nothing waits. The raw view
+	// of a picture is the image's bytes, so the switch is asked about first.
+	RawConfirm string
+	// RawConfirmTarget is the block id RawConfirm names, so the buttons can
+	// settle it.
+	RawConfirmTarget int
 	// DropActive reports files dragged over the terminal. DropNotice is the
 	// result of the most recent drop.
 	DropActive bool
@@ -106,6 +113,8 @@ type chromeActions struct {
 	Rename           func()
 	AcceptPaste      func()
 	CancelPaste      func()
+	AcceptRaw        func()
+	CancelRaw        func()
 	DismissDrop      func()
 	DismissScreen    func()
 	SplitRight       func()
@@ -131,6 +140,9 @@ type chromeActions struct {
 func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	if model.PendingPaste != nil {
 		pastePrompt(c, *model.PendingPaste, m, t, actions)
+	}
+	if model.RawConfirm != "" {
+		rawPrompt(c, model.RawConfirm, m, t, actions)
 	}
 	if model.DropActive || model.DropNotice != DropNoticeNone {
 		dropBanner(c, model, m, t, actions)
@@ -346,6 +358,30 @@ func encodingAtLabel(m locales.Messages, label string) domainterminal.Encoding {
 		}
 	}
 	return domainterminal.EncodingUTF8
+}
+
+// rawPrompt asks before a picture block is switched to its raw view. The raw
+// view is the image's own bytes, so the picture the user is looking at is
+// exactly what the switch destroys; asking keeps a stray click on the toolbar
+// from doing it. The actions sit in the header like the paste prompt's, so a
+// long name or a narrow window cannot push them out of reach.
+func rawPrompt(c *ui.Context, name string, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	ui.Column(c).FillWidth().Padding(6).Gap(4).Background(t.Surface).
+		Border(1, t.Accent).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SessionRawConfirmTitle(name)).FontSize(kit.M(c).Font.Footnote).
+				Bold().SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
+			accept := ui.PrimaryButton(c, m.SessionRawConfirmAccept())
+			if accept.Clicked() && actions.AcceptRaw != nil {
+				actions.AcceptRaw()
+			}
+			if ui.Button(c, m.SessionRawConfirmCancel()).Clicked() && actions.CancelRaw != nil {
+				actions.CancelRaw()
+			}
+		})
+		ui.Text(c, m.SessionRawConfirmBody()).FontSize(kit.M(c).Font.Caption2).
+			Wrap().MinWidth(0).TextColor(t.TextMuted)
+	})
 }
 
 // pastePrompt is the multiline paste confirmation. The preview is scrollable

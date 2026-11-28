@@ -152,8 +152,24 @@
               go
               pkgs.gopls
               pkgs.just
+              # The picture decoders in ui/terminal/lensview call libjpeg and
+              # libwebp through cgo, so a drawing block can show the rows of an
+              # image that is still arriving (and the usable part of a
+              # truncated file) instead of waiting for the last byte. The
+              # headers and pkg-config files come from the dev outputs.
+              pkgs.libjpeg.dev
+              pkgs.libwebp
+              pkgs.pkg-config
             ];
-            env.CGO_ENABLED = "0";
+            env = {
+              CGO_ENABLED = "1";
+              # libjpeg-turbo's pkg-config name is libjpeg; both are found
+              # through the default search path the dev outputs install into.
+              PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [
+                pkgs.libjpeg.dev
+                pkgs.libwebp
+              ];
+            };
           };
 
           # iOS needs no packaged SDK: Xcode is the toolchain, and nix only

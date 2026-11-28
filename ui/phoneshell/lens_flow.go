@@ -95,32 +95,36 @@ func (f *phoneLensFlow) bind(term *terminal.Terminal) {
 	f.readyOnce.Do(func() { close(f.ready) })
 }
 
-// feed parses one output chunk. It runs on the terminal's read goroutine, in
-// the order the bytes reach the screen.
-func (f *phoneLensFlow) feed(data []byte) {
+// feed parses one output chunk and returns the bytes that should reach the
+// visible terminal (with captured binary payloads stripped). It runs on the
+// terminal's read goroutine, in the order the bytes arrive.
+func (f *phoneLensFlow) feed(data []byte) []byte {
 	if f == nil || len(data) == 0 {
-		return
+		return data
 	}
 	f.mu.Lock()
 	// The tap is shared with the UI thread's setSize: a resize and a read must
 	// not rewrap its rows at once.
-	f.tap.Feed(data)
+	filtered := f.tap.FeedFilter(data)
 	if f.mirror == nil {
 		f.mu.Unlock()
-		return
+		return filtered
 	}
-	// Split at the integration's markers so the mirror is snapshotted at the
-	// cursor position the marker names, not at wherever later output moved it.
-	f.boundary.feed(data, func(chunk []byte, marker string) {
-		if len(chunk) > 0 {
-			f.feedMirror(chunk)
-		}
-		if marker != "" {
-			f.recordMarker(marker)
-		}
-	})
+	if len(filtered) > 0 {
+		// Split at the integration's markers so the mirror is snapshotted at the
+		// cursor position the marker names, not at wherever later output moved it.
+		f.boundary.feed(filtered, func(chunk []byte, marker string) {
+			if len(chunk) > 0 {
+				f.feedMirror(chunk)
+			}
+			if marker != "" {
+				f.recordMarker(marker)
+			}
+		})
+	}
 	f.mu.Unlock()
 	f.requestRedraw()
+	return filtered
 }
 
 // setRedraw installs the frame request the reader wakes on output.
@@ -284,19 +288,42 @@ func (f *phoneLensFlow) close() {
 	}
 }
 
-// lensTapConn feeds the flow before the terminal consumes the bytes.
+// lensTapConn feeds the flow before the terminal consumes the bytes, stripping
+// binary-captured payloads so they do not paint garbage cells.
 type lensTapConn struct {
-	conn io.ReadWriteCloser
-	flow *phoneLensFlow
+	conn    io.ReadWriteCloser
+	flow    *phoneLensFlow
+	pending []byte
 }
 
 func (c *lensTapConn) Read(p []byte) (int, error) {
-	c.flow.waitReady()
-	n, err := c.conn.Read(p)
-	if n > 0 {
-		c.flow.feed(p[:n])
+	if len(p) == 0 {
+		return 0, nil
 	}
-	return n, err
+	c.flow.waitReady()
+	for {
+		if len(c.pending) > 0 {
+			n := copy(p, c.pending)
+			c.pending = c.pending[n:]
+			return n, nil
+		}
+		n, err := c.conn.Read(p)
+		if n <= 0 {
+			return n, err
+		}
+		filtered := c.flow.feed(p[:n])
+		if len(filtered) == 0 {
+			if err != nil {
+				return 0, err
+			}
+			continue
+		}
+		copied := copy(p, filtered)
+		if copied < len(filtered) {
+			c.pending = append(c.pending[:0], filtered[copied:]...)
+		}
+		return copied, err
+	}
 }
 
 func (c *lensTapConn) Write(p []byte) (int, error) { return c.conn.Write(p) }

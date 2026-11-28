@@ -430,28 +430,20 @@ func csiNums(params string) []int {
 }
 
 // sgrTokens applies a Select Graphic Rendition parameter list, where one parameter
-// may carry colon sub-parameters (4:3 is a curly underline).
+// may carry colon sub-parameters (4:3 is a curly underline, 38:5:4 is blue).
 func (s *screen) sgrTokens(tokens []string) {
 	if len(tokens) == 0 || (len(tokens) == 1 && tokens[0] == "") {
 		s.st = sgr{}
 		return
 	}
-	nums := make([]int, 0, len(tokens))
-	for _, tk := range tokens {
-		main, sub, _ := strings.Cut(tk, ":")
+	nums := make([]int, len(tokens))
+	for i, tk := range tokens {
+		main, _, _ := strings.Cut(tk, ":")
 		n, err := strconv.Atoi(main)
 		if err != nil {
 			n = 0
 		}
-		nums = append(nums, n)
-		// The underline style arrives as "4:3".
-		if n == 4 {
-			if sub == "" {
-				s.st.rule = 1
-			} else if v, err := strconv.Atoi(sub); err == nil {
-				s.st.rule = v
-			}
-		}
+		nums[i] = n
 	}
 	for i := 0; i < len(nums); i++ {
 		n := nums[i]
@@ -464,6 +456,16 @@ func (s *screen) sgrTokens(tokens []string) {
 			s.st.dim = true
 		case n == 3:
 			s.st.italic = true
+		case n == 4:
+			// Underline style arrives as "4" or "4:3". Handling it inside the
+			// sequential switch (after 38/48/58 advance past their arguments)
+			// keeps palette index 4 (blue in 38;5;4) from adding an underline.
+			_, sub, hasSub := strings.Cut(tokens[i], ":")
+			if !hasSub || sub == "" {
+				s.st.rule = 1
+			} else if v, err := strconv.Atoi(sub); err == nil {
+				s.st.rule = v
+			}
 		case n == 9:
 			s.st.strike = true
 		case n == 21:
@@ -480,7 +482,6 @@ func (s *screen) sgrTokens(tokens []string) {
 			s.st.bold, s.st.dim = false, false
 		case n == 23:
 			s.st.italic = false
-
 		case n == 27:
 			s.st.reverse = false
 		case n >= 30 && n <= 37:
@@ -495,32 +496,70 @@ func (s *screen) sgrTokens(tokens []string) {
 			s.st.fg, s.st.hasFg = s.palette16(n-90+8), true
 		case n >= 100 && n <= 107:
 			s.st.bg, s.st.hasBg = s.palette16(n-100+8), true
-		case n == 58 && i+1 < len(nums):
+		case n == 38 || n == 48 || n == 58:
 			var col ui.Color
-			if nums[i+1] == 5 && i+2 < len(nums) {
-				col = s.palette256(nums[i+2])
-				i += 2
-			} else if nums[i+1] == 2 && i+4 < len(nums) {
-				col = ui.RGBA(uint8(nums[i+2]), uint8(nums[i+3]), uint8(nums[i+4]), 1)
-				i += 4
+			var ok bool
+			if strings.ContainsRune(tokens[i], ':') {
+				col, ok = s.parseColonColor(tokens[i])
+			} else if i+1 < len(nums) {
+				if nums[i+1] == 5 && i+2 < len(nums) {
+					col, ok = s.palette256(nums[i+2]), true
+					i += 2
+				} else if nums[i+1] == 2 && i+4 < len(nums) {
+					col, ok = ui.RGBA(uint8(nums[i+2]), uint8(nums[i+3]), uint8(nums[i+4]), 1), true
+					i += 4
+				}
 			}
-			s.st.ruleColor, s.st.hasRuleColor = col, true
-		case (n == 38 || n == 48) && i+1 < len(nums):
-			var col ui.Color
-			if nums[i+1] == 5 && i+2 < len(nums) {
-				col = s.palette256(nums[i+2])
-				i += 2
-			} else if nums[i+1] == 2 && i+4 < len(nums) {
-				col = ui.RGBA(uint8(nums[i+2]), uint8(nums[i+3]), uint8(nums[i+4]), 1)
-				i += 4
-			}
-			if n == 38 {
-				s.st.fg, s.st.hasFg = col, true
-			} else {
-				s.st.bg, s.st.hasBg = col, true
+			if ok {
+				switch n {
+				case 38:
+					s.st.fg, s.st.hasFg = col, true
+				case 48:
+					s.st.bg, s.st.hasBg = col, true
+				case 58:
+					s.st.ruleColor, s.st.hasRuleColor = col, true
+				}
 			}
 		}
 	}
+}
+
+// parseColonColor parses ISO-8613-3 colon-separated color parameters such as
+// "38:5:4" (256-color) or "38:2::10:20:30" / "38:2:10:20:30" (truecolor).
+func (s *screen) parseColonColor(token string) (ui.Color, bool) {
+	parts := strings.Split(token, ":")
+	if len(parts) < 3 {
+		return ui.Color{}, false
+	}
+	mode, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return ui.Color{}, false
+	}
+	switch mode {
+	case 5:
+		idx, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return ui.Color{}, false
+		}
+		return s.palette256(idx), true
+	case 2:
+		var rStr, gStr, bStr string
+		if len(parts) >= 6 {
+			rStr, gStr, bStr = parts[3], parts[4], parts[5]
+		} else if len(parts) == 5 {
+			rStr, gStr, bStr = parts[2], parts[3], parts[4]
+		} else {
+			return ui.Color{}, false
+		}
+		r, err1 := strconv.Atoi(rStr)
+		g, err2 := strconv.Atoi(gStr)
+		b, err3 := strconv.Atoi(bStr)
+		if err1 != nil || err2 != nil || err3 != nil {
+			return ui.Color{}, false
+		}
+		return ui.RGBA(uint8(r), uint8(g), uint8(b), 1), true
+	}
+	return ui.Color{}, false
 }
 
 // PromptRows is what the shell actually drew for a command's prompt and its

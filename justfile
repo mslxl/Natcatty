@@ -1,4 +1,7 @@
-export CGO_ENABLED := "0"
+# The picture decoders under ui/terminal/lensview call libjpeg and libwebp
+# through cgo, so a drawing block can show the rows of an image that is still
+# arriving. The nix dev shells supply both libraries (see flake.nix).
+export CGO_ENABLED := "1"
 
 # Apply the MyGo patches to the submodule after checking it out.
 prepare-mygo:

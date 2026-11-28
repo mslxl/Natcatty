@@ -147,7 +147,21 @@ function global:__netcatty_preexec([string]$line) {
     if ($command -and $cwd) {
         [Console]::Write($esc + ']1337;NetcattyExec;powershell;' + $cwd + ';' + $command + $bel)
     }
-    [Console]::Write($esc + ']133;C' + $bel)
+    # The standard mark carries the command line itself, URL-encoded: it is the
+    # field fish and PowerShell share, and EscapeDataString is the encoder the
+    # .NET runtime already has. A line over the encoder limit is skipped rather
+    # than dropped silently, so the mark still starts the command.
+    $encoded = ''
+    try {
+        $encoded = [Uri]::EscapeDataString($line)
+    } catch {
+        $encoded = ''
+    }
+    if ($encoded) {
+        [Console]::Write($esc + ']133;C;cmdline_url=' + $encoded + $bel)
+    } else {
+        [Console]::Write($esc + ']133;C' + $bel)
+    }
 }
 
 # LASTEXITCODE does not exist until the first native command. Defining it as
@@ -223,7 +237,9 @@ function global:__netcatty_finish {
     }
     [Console]::Write($esc + ']133;D;' + $netcatty_status + $bel)
     [Console]::Write($esc + ']1337;NetcattyHook;powershell' + $bel)
-    [Console]::Write($esc + ']133;A' + $bel)
+    # redraw=0 promises PowerShell will not draw the prompt again when the
+    # window is resized, so the terminal reflows it instead of both drawing it.
+    [Console]::Write($esc + ']133;A;redraw=0' + $bel)
     [Console]::Write($esc + ']7;file://' + $hostName + (__netcatty_uri_path $cwd) + $bel)
     [Console]::Write($esc + ']133;B' + $bel)
     $netcatty_user_prompt

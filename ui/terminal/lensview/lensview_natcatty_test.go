@@ -1,7 +1,11 @@
 package lensview
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -518,5 +522,76 @@ func TestNatcattyLensViewTableHeaderDragResizesTheColumn(t *testing.T) {
 	}
 	if got := fitted.W - before.W; got > 1 || got < -1 {
 		t.Fatalf("a double click left the column at %v, want its fitted %v", fitted.W, before.W)
+	}
+}
+
+// Growing PNG decoding must reset its previous-row filter buffer on each frame
+// (otherwise frame 2+ corrupts row 0) and isolate state per block scope so
+// running `cat` on the same path a second time starts fresh.
+func TestGrowingPNGClearsPrevRowAndIsolatesRepeatedRuns(t *testing.T) {
+	const w, h = 64, 64
+	src := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			src.SetRGBA(x, y, color.RGBA{
+				R: uint8((x*7 + y*13) % 256),
+				G: uint8((x*11 + y*5) % 256),
+				B: uint8((x*3 + y*17) % 256),
+				A: 0xFF,
+			})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	data := buf.Bytes()
+
+	// Verify Growing PNG decoder across multiple frames preserves row 0 accurately.
+	g := NewGrowing()
+	defer g.Close()
+	// Feed in two frames: first ~70%, then 100%.
+	g.Bitmap(data[:len(data)*7/10], nil)
+	if _, ok := g.Bitmap(data, nil); !ok {
+		t.Fatal("Growing.Bitmap returned false for complete PNG")
+	}
+	if g.img == nil || g.Rows() != h {
+		t.Fatalf("Growing rows = %d, want %d", g.Rows(), h)
+	}
+	for x := 0; x < w; x++ {
+		got := g.img.RGBAAt(x, 0)
+		want := src.RGBAAt(x, 0)
+		if got != want {
+			t.Fatalf("row 0 pixel (%d,0) corrupted across frames: got %v, want %v", x, got, want)
+		}
+	}
+
+	// Verify bitmapForImage isolates repeated runs of the same path via growKey
+	// and cleans up growing state on completion.
+	for _, scope := range []string{"run-1", "run-2"} {
+		growKey := scope + ":/tmp/same.png"
+		partial := lens.Image{
+			Data: data[:len(data)*7/10], Path: "/tmp/same.png",
+			Growing: true, Complete: len(data), Total: int64(len(data)),
+		}
+		bitmapForImage(partial, growKey)
+		full := lens.Image{
+			Data: data, Path: "/tmp/same.png",
+			Growing: false, Complete: len(data), Total: int64(len(data)),
+		}
+		bmp, ok := bitmapForImage(full, growKey)
+		if !ok {
+			t.Fatalf("%s: complete PNG did not decode", scope)
+		}
+		bw, bh := bmp.Size()
+		if bw != w || bh != h {
+			t.Fatalf("%s: size = %dx%d, want %dx%d", scope, bw, bh, w, h)
+		}
+		growingMu.Lock()
+		_, stillCached := growingStates[growKey]
+		growingMu.Unlock()
+		if stillCached {
+			t.Fatalf("%s: growingStates entry was not cleaned up after full decode", scope)
+		}
 	}
 }

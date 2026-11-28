@@ -763,12 +763,17 @@ func TestHooksKeepAnUnknownExitUnknown(t *testing.T) {
 }
 
 func TestScriptsGuardAgainstExistingIntegrations(t *testing.T) {
+	// Atuin and Starship are checked but not skipped: they draw the prompt and
+	// keep their own state, yet neither reports the command line on the start
+	// mark, so a terminal reading only the mark never learns what ran. The hook
+	// has to install beside them; skipping on their presence left every command
+	// unclaimed on a shell that loads either (a picture printed its bytes as
+	// text, with no toolbar on its block).
 	common := []string{
 		"NETCATTY_HOOK",
+		"ITERM_SHELL_INTEGRATION_INSTALLED",
 		"ATUIN_SESSION",
 		"STARSHIP_SHELL",
-		"STARSHIP_SESSION_KEY",
-		"ITERM_SHELL_INTEGRATION_INSTALLED",
 	}
 	matrix := map[string]struct {
 		script string

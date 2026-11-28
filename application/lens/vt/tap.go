@@ -5,6 +5,7 @@
 package vt
 
 import (
+	"bytes"
 	"encoding/base64"
 	"net/url"
 	"strconv"
@@ -46,6 +47,19 @@ type Tap struct {
 	colsMu sync.RWMutex
 	cols   int // capture width in cells; 0 disables soft-wrap joining
 	col    int // cells used by the current logical line
+
+	// binBuf accumulates ground-state bytes while the running command is
+	// binary-captured (lens.ByteSink). They are flushed to the engine through
+	// the store at the end of every chunk (holding back any trailing escape
+	// prefix that might be a split OSC 133;D) and in full on command end.
+	binBuf []byte
+	// binTail keeps the last binTerminatorScanBytes of the binary stream across
+	// chunks so an OSC 133;D split across two PTY reads is still recognized and
+	// re-emitted whole into the filtered terminal stream.
+	binTail []byte
+	// binaryCapture caches t.store.BinaryRunning() for the active command so
+	// FeedFilter does not lock the store on every byte of a multi-megabyte file.
+	binaryCapture bool
 
 	// ansi keeps the same line with escapes, and escLine/escBlock mark where the
 	// last escape began so our own OSC marks (133/7/9/7501) can be dropped from
@@ -294,6 +308,21 @@ func (t *Tap) Cols() int {
 
 // Feed parses a chunk of the program's output.
 func (t *Tap) Feed(b []byte) {
+	t.FeedFilter(b)
+}
+
+// FeedFilter parses a chunk of the program's output and returns the slice of
+// bytes that should continue on to the terminal (everything outside an active
+// binary capture, plus the complete OSC 133;D mark that ends one). Filtering
+// inline with the parser guarantees exact byte alignment with no separate
+// offset tracking that can drift across stripped or highlighted streams.
+func (t *Tap) FeedFilter(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	var filtered []byte
+	filtering := false
+	keepFrom := 0
 	for i := 0; i < len(b); i++ {
 		c := b[i]
 		// Keep every byte for the styled line; an OSC that turns out to be one of
@@ -303,12 +332,57 @@ func (t *Tap) Feed(b []byte) {
 		// either, byte by byte as it arrives: an image is read in many reads,
 		// and the buffer is emptied after each of them, so remembering the
 		// introducer's offset alone could never cut the payload back out.
-		if !t.alt && t.state != stString && t.state != stStringEsc {
+		if !t.alt && !t.binaryCapture && t.state != stString && t.state != stStringEsc {
 			t.ansi = append(t.ansi, c)
 		}
 		switch t.state {
 		case stGround:
 			switch {
+			case t.inCommand && !t.alt && t.binaryCapture:
+				// A binary capture (lens.ByteSink): every byte is the binary
+				// payload, including the control characters and the escape
+				// introducer. High-entropy payload produces \x1b bytes often
+				// enough that the regular escape machine would swallow whole
+				// APC/OSC/CSI sequences over them and lose the picture, so the
+				// only sequence this mode recognizes is the exact end-of-command
+				// mark — OSC 133;D plus its terminator — scanned for with a
+				// sliding match over binTail across chunks.
+				if !filtering {
+					filtering = true
+					filtered = make([]byte, 0, len(b))
+				}
+				if keepFrom < i {
+					filtered = append(filtered, b[keepFrom:i]...)
+				}
+				keepFrom = i + 1
+				t.binBuf = append(t.binBuf, c)
+				t.binTail = append(t.binTail, c)
+				if len(t.binTail) > binTerminatorScanBytes {
+					copy(t.binTail, t.binTail[len(t.binTail)-binTerminatorScanBytes:])
+					t.binTail = t.binTail[:binTerminatorScanBytes]
+				}
+				// The terminator can only complete on a BEL or a backslash —
+				// anything else is payload, and scanning the tail on every
+				// payload byte is waste on a large file.
+				if c == 0x07 || c == '\\' {
+					if status, termLen, done := matchBinaryTerminator(t.binTail); done {
+						// Re-emit the complete OSC 133;D mark into the filtered
+						// stream so downstream consumers (session tap, bell
+						// mirror, visible terminal) close the command cleanly
+						// even when the mark arrived split across two reads.
+						filtered = append(filtered, t.binTail[len(t.binTail)-termLen:]...)
+						if len(t.binBuf) >= termLen {
+							t.binBuf = t.binBuf[:len(t.binBuf)-termLen]
+						} else {
+							t.binBuf = t.binBuf[:0]
+						}
+						t.flushBinaryAll()
+						t.binTail = t.binTail[:0]
+						t.inCommand = false
+						t.binaryCapture = false
+						t.store.End(status)
+					}
+				}
 			case c == 0x07:
 				// A bell: Terminal answers it with a ripple from the cursor, so it must
 				// not reach the line the lens reads.
@@ -407,13 +481,59 @@ func (t *Tap) Feed(b []byte) {
 	}
 	// Flush after the chunk as well: the output may share the chunk with the
 	// OSC that ends the command, and the store must see the bytes first.
-	t.flushRaw()
+	if t.binaryCapture {
+		t.flushBinarySafe()
+	} else {
+		t.flushRaw()
+	}
+	if !filtering {
+		return b
+	}
+	if keepFrom < len(b) {
+		filtered = append(filtered, b[keepFrom:]...)
+	}
+	return filtered
+}
+
+// flushBinarySafe hands captured binary bytes to the store while holding back
+// any trailing escape sequence inside the last binTerminatorScanBytes bytes so
+// an OSC 133;D split across two reads is never fed into the lens payload and
+// can be stripped cleanly when its terminator arrives.
+func (t *Tap) flushBinarySafe() {
+	if len(t.binBuf) == 0 {
+		return
+	}
+	scanStart := len(t.binBuf) - binTerminatorScanBytes
+	if scanStart < 0 {
+		scanStart = 0
+	}
+	flushEnd := len(t.binBuf)
+	if idx := bytes.IndexByte(t.binBuf[scanStart:], 0x1b); idx >= 0 {
+		flushEnd = scanStart + idx
+	}
+	if flushEnd > 0 {
+		t.store.AppendBytes(t.binBuf[:flushEnd])
+		remaining := len(t.binBuf) - flushEnd
+		copy(t.binBuf, t.binBuf[flushEnd:])
+		t.binBuf = t.binBuf[:remaining]
+	}
+}
+
+// flushBinaryAll hands every remaining captured binary byte to the store.
+func (t *Tap) flushBinaryAll() {
+	if len(t.binBuf) > 0 {
+		t.store.AppendBytes(t.binBuf)
+		t.binBuf = t.binBuf[:0]
+	}
 }
 
 // flushRaw hands the output seen so far to the running block. It runs before
 // every OSC is dispatched, so a command's last output is never lost when it
 // arrives in the same read as the mark that ends the command.
-func (t *Tap) flushRaw() { t.drain() }
+func (t *Tap) flushRaw() {
+	t.flushBinaryAll()
+	t.drain()
+}
 
 // Flush ends a line the program left open (no trailing newline).
 func (t *Tap) Flush() { t.flushLine() }
@@ -467,6 +587,8 @@ func (t *Tap) dispatchOSC() {
 			t.flushLine()
 			t.store.End(0)
 			t.inCommand = false
+			t.binaryCapture = false
+			t.binTail = t.binTail[:0]
 			t.rowsModel = nil
 			t.rowsOut = t.rowsOut[:0]
 			t.line = t.line[:0]
@@ -511,12 +633,7 @@ func (t *Tap) dispatchOSC() {
 			t.line = t.line[:0]
 			t.ansi = t.ansi[:0]
 			t.col = 0
-			parts := strings.SplitN(args, ";", 2)
-			typed := decode(parts[0])
-			line := typed
-			if len(parts) > 1 && parts[1] != "" {
-				line = decode(parts[1]) // the alias-expanded line
-			}
+			typed, line := parseCommandLine(args)
 			if typed == "" && t.pendingTyped != "" {
 				typed = t.pendingTyped
 				line = typed
@@ -540,6 +657,8 @@ func (t *Tap) dispatchOSC() {
 				cwd = t.pendingCwd
 			}
 			markID = t.store.Begin(model.Cmd{Line: line, Typed: typed, Cwd: cwd})
+			t.binaryCapture = t.store.BinaryRunning()
+			t.binTail = t.binTail[:0]
 			t.pendingTyped = ""
 			t.pendingCwd = ""
 		case "D":
@@ -550,6 +669,8 @@ func (t *Tap) dispatchOSC() {
 			t.flushLine()
 			t.inCommand = false
 			t.tookOver.Store(false)
+			t.binaryCapture = false
+			t.binTail = t.binTail[:0]
 			t.store.End(status)
 		}
 	case "7":
@@ -581,6 +702,77 @@ func (t *Tap) dispatchOSC() {
 	t.store.OSC(code, strings.Split(rest, ";"))
 }
 
+// binTerminatorScanBytes bounds how far back matchBinaryTerminator looks in
+// the captured payload. It covers "\x1b]133;D;NNNNN;aid=...\x1b\\" with ample
+// room without making the scan cost grow with the payload.
+const binTerminatorScanBytes = 64
+
+// matchBinaryTerminator reports whether the captured payload ends with the
+// shell integration's end-of-command mark, OSC 133;D. The regular escape
+// machine cannot be trusted inside binary capture, so this scans the tail of
+// the payload for the exact byte sequence: ESC ] 133 ; D, an optional ;status
+// of ASCII digits, optional ;key=val printable parameters, then BEL or ESC \.
+// It returns the parsed exit status (zero when the mark carries none), the byte
+// length of the matched mark, and whether the terminator is complete.
+func matchBinaryTerminator(buf []byte) (status, termLen int, done bool) {
+	start := len(buf) - binTerminatorScanBytes
+	if start < 0 {
+		start = 0
+	}
+	tail := buf[start:]
+	// Find the last "\x1b]133;D" in the tail; everything after it must be the
+	// optional status, optional parameters, and the terminator.
+	idx := -1
+	for i := len(tail) - len("\x1b]133;D"); i >= 0; i-- {
+		if tail[i] == 0x1b && string(tail[i:i+len("\x1b]133;D")]) == "\x1b]133;D" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return 0, 0, false
+	}
+	rest := tail[idx+len("\x1b]133;D"):]
+	// Optional ";digits".
+	if len(rest) > 0 && rest[0] == ';' {
+		j := 1
+		for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+			status = status*10 + int(rest[j]-'0')
+			j++
+		}
+		// Allow ";aid=..." (no numeric status) or ";0;aid=..." (status + params)
+		// or ";0;" (trailing semicolon), as long as every parameter byte is
+		// printable ASCII (0x20..0x7e) so binary noise cannot masquerade as params.
+		if j == 1 && (len(rest) <= 1 || rest[1] == 0x07 || rest[1] == 0x1b) {
+			return 0, 0, false // bare ";" with neither digits nor params
+		}
+		rest = rest[j:]
+		if len(rest) > 0 && rest[0] == ';' {
+			k := 1
+			for k < len(rest) && rest[k] >= 0x20 && rest[k] <= 0x7e {
+				k++
+			}
+			rest = rest[k:]
+		} else if j == 1 {
+			// Started with ";" followed by non-digit printable param (e.g. ";aid=1").
+			k := 0
+			for k < len(rest) && rest[k] >= 0x20 && rest[k] <= 0x7e {
+				k++
+			}
+			rest = rest[k:]
+		}
+	}
+	// The terminator proper: BEL, or ESC \. Either way, rest must be exactly
+	// the terminator.
+	switch {
+	case len(rest) == 1 && rest[0] == 0x07:
+		return status, len(tail) - idx, true
+	case len(rest) == 2 && rest[0] == 0x1b && rest[1] == '\\':
+		return status, len(tail) - idx, true
+	}
+	return 0, 0, false
+}
+
 func decode(s string) string {
 	if s == "" {
 		return ""
@@ -589,6 +781,171 @@ func decode(s string) string {
 		return u
 	}
 	return s
+}
+
+// parseCommandLine reads the command line a start-of-command mark carries. It
+// returns the line as the user typed it and the line with aliases expanded (the
+// same when there is none).
+//
+// The form is the terminal-agnostic one kitty's shell integration uses, so a
+// shell script written for any terminal speaks it:
+//
+//	cmdline=<word>                          bash, and zsh with no alias match
+//	cmdline=<word>;cmdline_expanded=<word>  zsh, when an alias expanded
+//	cmdline_url=<pct-encoded>               fish, PowerShell, nushell, xonsh
+//
+// Older sessions of this terminal sent the line separately, in
+// OSC 1337;NetcattyExec, and left the mark bare; a mark that carries neither
+// key falls back to that layout, where the two fields are base64 text.
+func parseCommandLine(args string) (typed, line string) {
+	if strings.TrimSpace(args) == "" {
+		return "", ""
+	}
+	var quoted, quotedExpanded string
+	var haveQuoted, haveURL bool
+	for _, field := range splitMarkFields(args) {
+		// Only the mark's own keys count. A bare base64 word can contain '=' —
+		// the padding — and must not be read as a key.
+		var key string
+		switch {
+		case strings.HasPrefix(field, "cmdline_url="):
+			key = "cmdline_url"
+		case strings.HasPrefix(field, "cmdline_expanded="):
+			key = "cmdline_expanded"
+		case strings.HasPrefix(field, "cmdline="):
+			key = "cmdline"
+		default:
+			continue
+		}
+		value := field[len(key)+1:]
+		switch key {
+		case "cmdline":
+			quoted, haveQuoted = value, true
+		case "cmdline_expanded":
+			quotedExpanded = value
+		case "cmdline_url":
+			if u, err := url.QueryUnescape(value); err == nil {
+				typed, line = u, u
+				haveURL = true
+			}
+		}
+	}
+	if haveURL {
+		if strings.TrimSpace(quotedExpanded) != "" {
+			if e, err := url.QueryUnescape(quotedExpanded); err == nil {
+				line = e
+			}
+		}
+		if strings.TrimSpace(quoted) != "" {
+			if t := unquoteShellWord(quoted); strings.TrimSpace(t) != "" {
+				typed = t
+			}
+		}
+		return typed, line
+	}
+	if haveQuoted {
+		typed = unquoteShellWord(quoted)
+		line = typed
+		if strings.TrimSpace(quotedExpanded) != "" {
+			if e := unquoteShellWord(quotedExpanded); strings.TrimSpace(e) != "" {
+				line = e
+			}
+		}
+		return typed, line
+	}
+	// No keys: the two-field layout of the earlier mark, where each field is
+	// percent-encoded (the same encoding the mark has always used for these).
+	parts := strings.SplitN(args, ";", 2)
+	typed = decode(parts[0])
+	line = typed
+	if len(parts) > 1 && parts[1] != "" {
+		line = decode(parts[1])
+	}
+	return typed, line
+}
+
+// splitMarkFields splits a mark's parameters on ';', keeping a ';' that belongs
+// to a quoted word: a command line like `sh -c 'a; b'` arrives shell-quoted, so
+// the quoted regions are skipped over.
+func splitMarkFields(args string) []string {
+	var fields []string
+	var cur strings.Builder
+	var quote byte
+	for i := 0; i < len(args); i++ {
+		c := args[i]
+		switch {
+		case quote != 0:
+			cur.WriteByte(c)
+			if c == '\\' && i+1 < len(args) {
+				i++
+				cur.WriteByte(args[i])
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+			cur.WriteByte(c)
+		case c == '\\' && i+1 < len(args):
+			i++
+			cur.WriteByte(args[i])
+		case c == ';':
+			fields = append(fields, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	fields = append(fields, cur.String())
+	return fields
+}
+
+// unquoteShellWord undoes the shell quoting a reported command line carries. zsh
+// reports it with its `%q` form (backslash-escaped words), bash and the others
+// with single quotes, and PowerShell and fish send a percent-encoded line
+// instead (handled before this). A word with no quoting is returned as is.
+func unquoteShellWord(word string) string {
+	word = strings.TrimSpace(word)
+	if word == "" {
+		return ""
+	}
+	if len(word) >= 2 {
+		if (word[0] == '\'' && word[len(word)-1] == '\'') ||
+			(word[0] == '"' && word[len(word)-1] == '"') {
+			inner := word[1 : len(word)-1]
+			if word[0] == '\'' {
+				return inner
+			}
+			// Double quotes keep only these escapes; any other backslash is
+			// literal, as the shell reads it.
+			var b strings.Builder
+			for i := 0; i < len(inner); i++ {
+				if inner[i] == '\\' && i+1 < len(inner) {
+					switch inner[i+1] {
+					case '"', '\\', '$', '`':
+						b.WriteByte(inner[i+1])
+						i++
+						continue
+					}
+				}
+				b.WriteByte(inner[i])
+			}
+			return b.String()
+		}
+	}
+	// %q form: spaces and specials are backslash-escaped. A backslash before a
+	// character only ever escapes that character, so dropping it is exact.
+	var b strings.Builder
+	for i := 0; i < len(word); i++ {
+		if word[i] == '\\' && i+1 < len(word) {
+			i++
+			b.WriteByte(word[i])
+			continue
+		}
+		b.WriteByte(word[i])
+	}
+	return b.String()
 }
 
 // parseNetcattyExec reads the hook's private command marker: the working

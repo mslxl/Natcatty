@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Link is an OSC 8 hyperlink inside a line's text, as byte offsets.
@@ -61,11 +62,15 @@ type Block struct {
 	Status  int
 	Exited  bool
 	Raw     string // the output as the program wrote it, escapes stripped
-	LensID  string // "" when no lens claimed the command
-	LensErr string
-	Native  any // the lens view tree (lens.Node); nil means raw
-	State   any // the lens state, opaque here
-	Mode    ViewMode
+	// rawBytes holds the complete raw byte stream of a finished binary-captured
+	// block until Raw is first requested (switching to Raw view or Copy), so
+	// Native image blocks pay zero formatting cost while preserving every byte.
+	rawBytes []byte
+	LensID   string // "" when no lens claimed the command
+	LensErr  string
+	Native   any // the lens view tree (lens.Node); nil means raw
+	State    any // the lens state, opaque here
+	Mode     ViewMode
 	// Progress is the program's OSC 9;4 progress: nil when it reported none,
 	// negative for the indeterminate state.
 	Progress *float64
@@ -75,6 +80,42 @@ type Block struct {
 	// block, so they stay in the flow with its output instead of floating
 	// above the live screen until the buffer is cleared.
 	Images []Image
+	// Binary marks a command whose lens asked for the raw byte stream (see
+	// lens.ByteSink). The tap checks it on the running block: a binary block
+	// does not have its bytes run through the screen and split into rows,
+	// because that pipeline is meaningless for binary output and floods the
+	// store with garbage rows.
+	Binary bool
+	// Picture marks a block whose native view is a picture. The store cannot
+	// inspect the view tree (the lens package owns those types, and importing
+	// them here would be a cycle), so the engine sets this when it records a
+	// view: a picture's raw view is binary noise, which is what makes replacing
+	// it worth confirming.
+	Picture bool
+}
+
+// showsPicture reports whether the block's native view is a picture, which is
+// what makes its raw view destructive enough to confirm first.
+func (b *Block) showsPicture() bool { return b.Picture }
+
+// MarkBinary flags the block with id as binary-captured. The engine calls it
+// right after Open when the lens asked for raw bytes.
+func (s *Store) MarkBinary(id int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id < 0 || id >= len(s.blocks) {
+		return
+	}
+	s.blocks[id].Binary = true
+	s.rev++
+}
+
+// BinaryRunning reports whether the currently running block is binary-captured.
+// The tap reads it on every output byte, so it is cheap: a single locked load.
+func (s *Store) BinaryRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cur != nil && s.cur.Binary
 }
 
 // SetProgress records the running block's OSC 9;4 progress.
@@ -185,6 +226,11 @@ type Store struct {
 	// lensesOn is Terminal's `command_lenses` setting: when off, a block shows raw
 	// output unless it was switched by hand (Block.Mode).
 	lensesOn bool
+
+	// pendingRaw is the block whose switch to the raw view waits for the user's
+	// confirmation (see RequestRaw), or -1. A picture's raw view is binary
+	// noise, so replacing the picture with it is asked about first.
+	pendingRaw int
 }
 
 // storeSeq numbers the stores so their block ids never collide.
@@ -193,7 +239,7 @@ var storeSeq uint64
 // NewStore makes an empty store.
 func NewStore(hooks Hooks) *Store {
 	storeSeq++
-	return &Store{uid: storeSeq, hooks: hooks, lensesOn: true}
+	return &Store{uid: storeSeq, hooks: hooks, lensesOn: true, pendingRaw: -1}
 }
 
 // LensesOn reports whether command lenses may claim new commands. When it is
@@ -275,6 +321,18 @@ func (s *Store) Snapshot() []Block {
 
 // SetNative records the lens view for the block with id.
 func (s *Store) SetNative(id int, lensID string, state, native any, err error) {
+	s.setNative(id, lensID, state, native, err, false)
+}
+
+// SetNativePicture is SetNative for a view that shows a picture: it also marks
+// the block, so a switch to the raw view (a wall of image bytes) is confirmed
+// first. The engine knows the view tree and the store does not, so the fact
+// travels with the call instead of being re-derived here.
+func (s *Store) SetNativePicture(id int, lensID string, state, native any, err error) {
+	s.setNative(id, lensID, state, native, err, true)
+}
+
+func (s *Store) setNative(id int, lensID string, state, native any, err error, picture bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id < 0 || id >= len(s.blocks) {
@@ -284,6 +342,7 @@ func (s *Store) SetNative(id int, lensID string, state, native any, err error) {
 	b.LensID = lensID
 	b.State = state
 	b.Native = native
+	b.Picture = picture
 	if err != nil {
 		b.LensErr = err.Error()
 	} else {
@@ -293,14 +352,21 @@ func (s *Store) SetNative(id int, lensID string, state, native any, err error) {
 }
 
 // Raw is the captured output text of the block with id, or "" when there is no
-// such block.
+// such block. For a binary-captured block, the complete raw byte stream is
+// formatted on first demand and cached on the block.
 func (s *Store) Raw(id int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id < 0 || id >= len(s.blocks) {
 		return ""
 	}
-	return s.blocks[id].Raw
+	b := &s.blocks[id]
+	if b.Binary && b.Exited && b.Raw == "" && len(b.rawBytes) > 0 {
+		b.Raw = FormatBinaryRaw(b.rawBytes)
+		b.rawBytes = nil
+		s.rev++
+	}
+	return b.Raw
 }
 
 // PartialRaw is the output captured so far for the running block with id (the
@@ -310,6 +376,9 @@ func (s *Store) PartialRaw(id int) string {
 	defer s.mu.Unlock()
 	if s.cur == nil || s.cur.ID != id {
 		return ""
+	}
+	if s.cur.Binary {
+		return FormatBinaryRaw(s.curRaw)
 	}
 	return string(s.curRaw)
 }
@@ -333,6 +402,77 @@ func (s *Store) SetMode(id int, mode ViewMode) {
 		return
 	}
 	s.blocks[id].Mode = mode
+	// A mode the user just made is no longer a pending switch: an accepted
+	// Raw, or a switch back to Native, settles the question.
+	if s.pendingRaw == id {
+		s.pendingRaw = -1
+	}
+	s.rev++
+}
+
+// PendingRaw is the id of the block whose switch to the raw view is waiting for
+// the user's confirmation, or -1 when nothing waits.
+//
+// The raw view of a picture block is a wall of binary, and the picture it
+// replaces is the reason the block exists: `cat photo.jpg` is readable as a
+// thumbnail and unreadable as bytes. The switch is offered, not taken: asking
+// first keeps a stray click on the toolbar from destroying the view, and the
+// confirmation names what the raw view will be so the choice is informed.
+func (s *Store) PendingRaw() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pendingRaw
+}
+
+// RequestRaw asks for the raw view of the block with id. A block whose view is
+// a picture does not switch yet: it is put aside as PendingRaw until ConfirmRaw
+// or CancelRaw. Every other block switches at once, because its raw view is the
+// text it printed and nothing is lost.
+//
+// It reports whether the switch happened right away.
+func (s *Store) RequestRaw(id int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id < 0 || id >= len(s.blocks) {
+		return false
+	}
+	if s.blocks[id].showsPicture() {
+		s.pendingRaw = id
+		s.rev++
+		return false
+	}
+	s.blocks[id].Mode = ViewRaw
+	if s.pendingRaw == id {
+		s.pendingRaw = -1
+	}
+	s.rev++
+	return true
+}
+
+// ConfirmRaw takes the pending switch to the raw view, and reports whether one
+// was waiting.
+func (s *Store) ConfirmRaw() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := s.pendingRaw
+	if id < 0 || id >= len(s.blocks) {
+		s.pendingRaw = -1
+		return false
+	}
+	s.blocks[id].Mode = ViewRaw
+	s.pendingRaw = -1
+	s.rev++
+	return true
+}
+
+// CancelRaw drops the pending switch, leaving the picture on screen.
+func (s *Store) CancelRaw() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingRaw < 0 {
+		return
+	}
+	s.pendingRaw = -1
 	s.rev++
 }
 
@@ -428,6 +568,33 @@ func (s *Store) AddLine(l Line) {
 	}
 }
 
+// binaryRawWrapCols wraps long runs of binary output that have no newlines,
+// matching how a terminal wraps raw binary bytes onto screen rows.
+const binaryRawWrapCols = 120
+
+// AppendBytes hands a chunk of raw output bytes to the hooks of a binary
+// block, and retains the complete raw byte stream in curRaw so switching the
+// block to Raw shows every byte of the command's output like a normal terminal.
+func (s *Store) AppendBytes(b []byte) {
+	s.mu.Lock()
+	if s.cur == nil || !s.cur.Binary {
+		s.mu.Unlock()
+		return
+	}
+	s.curRaw = append(s.curRaw, b...)
+	h := s.hooks
+	s.mu.Unlock()
+	if h == nil {
+		return
+	}
+	// Bytes is the binary counterpart of Line; the hooks interface predates
+	// binary capture, so it is reached through a type assertion rather than a
+	// new method on it.
+	if be, ok := h.(interface{ Bytes([]byte) }); ok {
+		be.Bytes(b)
+	}
+}
+
 // End closes the running block with the program's exit status.
 func (s *Store) End(status int) {
 	s.mu.Lock()
@@ -435,10 +602,19 @@ func (s *Store) End(status int) {
 		s.mu.Unlock()
 		return
 	}
+	binary := s.cur.Binary
 	s.cur.Ended = time.Now()
 	s.cur.Status = status
 	s.cur.Exited = true
-	s.cur.Raw = StripANSI(string(s.curRaw))
+	if binary {
+		// Transfer ownership of the complete raw byte slice without copying or
+		// eagerly formatting: Native view stays instant, and Raw() formats the
+		// entire stream on demand if the user switches to Raw or copies it.
+		s.cur.rawBytes = s.curRaw
+		s.curRaw = nil
+	} else {
+		s.cur.Raw = StripANSI(string(s.curRaw))
+	}
 	s.cur = nil
 	s.rev++
 	h := s.hooks
@@ -446,6 +622,45 @@ func (s *Store) End(status int) {
 	if h != nil {
 		h.End(status)
 	}
+}
+
+// FormatBinaryRaw renders raw binary bytes the way a terminal prints them:
+// escape sequences stripped, invalid UTF-8 bytes replaced with U+FFFD,
+// non-printable C0/C1 control codes dropped (preserving newlines and tabs),
+// and long newline-less runs wrapped to binaryRawWrapCols.
+func FormatBinaryRaw(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	cleaned := StripANSI(string(data))
+	var b strings.Builder
+	b.Grow(len(cleaned))
+	col := 0
+	for i := 0; i < len(cleaned); {
+		r, size := utf8.DecodeRuneInString(cleaned[i:])
+		i += size
+		if r == utf8.RuneError && size == 1 {
+			b.WriteRune(utf8.RuneError)
+			col++
+		} else if r == '\n' {
+			b.WriteByte('\n')
+			col = 0
+			continue
+		} else if r == '\t' {
+			b.WriteByte('\t')
+			col += 4
+		} else if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			continue
+		} else {
+			b.WriteRune(r)
+			col++
+		}
+		if col >= binaryRawWrapCols {
+			b.WriteByte('\n')
+			col = 0
+		}
+	}
+	return b.String()
 }
 
 // OSC hands a non-133 OSC to the hooks.

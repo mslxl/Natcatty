@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"bytes"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -179,5 +180,72 @@ func TestTapOmitsAlternateScreenPainting(t *testing.T) {
 	}
 	if strings.Contains(blocks[0].Raw, "VIM TITLE") {
 		t.Fatalf("the alternate screen became command output: %q", blocks[0].Raw)
+	}
+}
+
+type binaryCaptureHooks struct {
+	store    *model.Store
+	captured []byte
+	ended    bool
+	status   int
+}
+
+func (h *binaryCaptureHooks) Begin(cmd model.Cmd) {
+	if strings.Contains(cmd.Line, ".png") {
+		h.store.MarkBinary(h.store.LastID())
+	}
+}
+func (h *binaryCaptureHooks) Line(model.Line)      {}
+func (h *binaryCaptureHooks) OSC(string, []string) {}
+func (h *binaryCaptureHooks) Bytes(b []byte) {
+	h.captured = append(h.captured, b...)
+}
+func (h *binaryCaptureHooks) End(status int) {
+	h.ended = true
+	h.status = status
+}
+
+// FeedFilter must strip binary-captured payloads inline (so zero payload bytes
+// reach downstream terminal consumers) while keeping OSC 133;C, a cross-chunk
+// OSC 133;D terminator, and subsequent multi-byte UTF-8 prompts completely intact.
+func TestTapFeedFilterStripsBinaryPayloadAndHandlesSplitOSC133D(t *testing.T) {
+	hooks := &binaryCaptureHooks{}
+	store := model.NewStore(hooks)
+	hooks.store = store
+	tap := New(store).WithCols(80)
+
+	// Payload deliberately contains ESC Z (DECID), ESC [ c (DA1), BEL, NUL,
+	// high bytes, and an incomplete ESC]133;D; without a valid terminator.
+	payload := []byte("\x89PNG\r\n\x1a\n\x1bZ\x1b[c\x07\x00\xff\x1b]133;D;\xfe\x1b[6nPAYLOAD_END")
+
+	chunk1 := append([]byte("\x1b]133;A\x07prompt$ \x1b]133;B\x07cat photo.png\r\n\x1b]133;C;cmdline=cat\\ photo.png\x07"), payload[:18]...)
+	// Split OSC 133;D;0\x07 right across chunk2 and chunk3.
+	chunk2 := append(append([]byte(nil), payload[18:]...), []byte("\x1b]133;D;")...)
+	chunk3 := []byte("0\x07\x1b]133;A\x07❯ 完成 \x1b]133;B\x07")
+
+	var out bytes.Buffer
+	out.Write(tap.FeedFilter(chunk1))
+	out.Write(tap.FeedFilter(chunk2))
+	out.Write(tap.FeedFilter(chunk3))
+
+	if !hooks.ended || hooks.status != 0 {
+		t.Fatalf("binary command did not finish cleanly: ended=%v status=%d", hooks.ended, hooks.status)
+	}
+	if !bytes.Equal(hooks.captured, payload) {
+		t.Fatalf("captured payload mismatch:\n got: %x\nwant: %x", hooks.captured, payload)
+	}
+	wantOut := "\x1b]133;A\x07prompt$ \x1b]133;B\x07cat photo.png\r\n\x1b]133;C;cmdline=cat\\ photo.png\x07\x1b]133;D;0\x07\x1b]133;A\x07❯ 完成 \x1b]133;B\x07"
+	if got := out.String(); got != wantOut {
+		t.Fatalf("filtered terminal output mismatch:\n got: %q\nwant: %q", got, wantOut)
+	}
+
+	// Follow-up text command passes through untouched.
+	follow := []byte("\x1b]133;C;cmdline=echo\\ ok\x07ok\r\n\x1b]133;D;0\x07")
+	if got := string(tap.FeedFilter(follow)); got != string(follow) {
+		t.Fatalf("follow-up output = %q, want %q", got, string(follow))
+	}
+	blocks := store.Snapshot()
+	if len(blocks) != 2 || !blocks[0].Binary || !blocks[0].Exited || blocks[1].Raw != "ok\n" {
+		t.Fatalf("unexpected blocks: %+v", blocks)
 	}
 }

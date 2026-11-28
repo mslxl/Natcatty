@@ -1063,6 +1063,28 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		ghostText = s.suggestions[0].Text
 	}
 
+	// A picture block's switch to the raw view waits here for the user: the
+	// prompt names the file whose picture would be replaced by its bytes.
+	rawConfirm, rawConfirmTarget := "", -1
+	if s.flow != nil {
+		if id := s.flow.store.PendingRaw(); id >= 0 {
+			for _, b := range s.flow.store.Snapshot() {
+				if b.ID != id {
+					continue
+				}
+				name := b.Cmd.Line
+				if len(b.Cmd.Args) > 0 {
+					name = b.Cmd.Args[len(b.Cmd.Args)-1]
+				}
+				if name == "" {
+					name = b.LensID
+				}
+				rawConfirm, rawConfirmTarget = name, id
+				break
+			}
+		}
+	}
+
 	var renameAction func()
 	if s.paneActions.Rename != nil {
 		renameAction = s.beginRename
@@ -1078,6 +1100,8 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		LogProblem:       s.logError || snapshot.Logging.Problem != "",
 		Encoding:         snapshot.Encoding,
 		PendingPaste:     pending,
+		RawConfirm:       rawConfirm,
+		RawConfirmTarget: rawConfirmTarget,
 		DropActive:       s.dropOver,
 		DropCount:        dropCount,
 		DropAction:       dropAction,
@@ -1132,6 +1156,18 @@ func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeMod
 		},
 		CancelPaste: func() {
 			s.gate.Cancel()
+			s.redraw()
+		},
+		AcceptRaw: func() {
+			if s.flow != nil {
+				s.flow.store.ConfirmRaw()
+			}
+			s.redraw()
+		},
+		CancelRaw: func() {
+			if s.flow != nil {
+				s.flow.store.CancelRaw()
+			}
 			s.redraw()
 		},
 		DismissDrop: func() {
@@ -1399,6 +1435,9 @@ func (s *Surface) terminalView(c *ui.Context) ui.Element {
 			if tail.Running == "" {
 				tail.Running = block.Cmd.Line
 			}
+			// The lens built a view for the running command, so its block is
+			// already in the flow: the live area must not draw the same rows.
+			tail.RunningHasView = block.Native != nil
 		}
 		cursorColor := ui.Color{}
 		if terminalTheme != nil {
@@ -2080,6 +2119,47 @@ func (s *Surface) LensBlocks() []lensmodel.Block {
 		return nil
 	}
 	return s.flow.store.Snapshot()
+}
+
+// RawRequest asks a block for its raw view, the same call the toolbar's Raw
+// option makes. It reports whether the switch happened at once; a picture block
+// leaves a confirmation pending instead (see chromeModel.RawConfirm).
+//
+// It exists so the shell's own controls (and tests that drive them) reach the
+// store through one method, instead of every caller knowing the store's rules.
+func (s *Surface) RawRequest(id int) bool {
+	if s == nil || s.flow == nil {
+		return false
+	}
+	switched := s.flow.store.RequestRaw(id)
+	s.redraw()
+	return switched
+}
+
+// ConfirmRawView and CancelRawView settle a pending switch to the raw view.
+func (s *Surface) ConfirmRawView() {
+	if s == nil || s.flow == nil {
+		return
+	}
+	s.flow.store.ConfirmRaw()
+	s.redraw()
+}
+
+func (s *Surface) CancelRawView() {
+	if s == nil || s.flow == nil {
+		return
+	}
+	s.flow.store.CancelRaw()
+	s.redraw()
+}
+
+// PendingRawView is the id of the block whose raw view waits for confirmation,
+// or -1.
+func (s *Surface) PendingRawView() int {
+	if s == nil || s.flow == nil {
+		return -1
+	}
+	return s.flow.store.PendingRaw()
 }
 
 // Close closes the terminal and the observer. MyGo closes the ViewConn, which
